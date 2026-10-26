@@ -2,7 +2,7 @@ interface Env {
   BACKEND_URL?: string;
 }
 
-export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
+export const onRequest = async ({ request, env }: { request: Request; env: Env }) => {
   const backendBase = env.BACKEND_URL?.trim();
 
   if (!backendBase) {
