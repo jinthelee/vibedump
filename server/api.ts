@@ -51,10 +51,9 @@ export function saveCategories(categories: string[]) {
 function getValidAdminPasscodes(): Set<string> {
   const valid = new Set<string>();
   const envSecret = process.env.ADMIN_SECRET?.trim();
+  // Never fall back to a hard-coded production credential.
   if (envSecret) {
     valid.add(envSecret);
-  } else {
-    valid.add('vibedump-admin-2026');
   }
 
   // Check if operator set a custom password in site_settings
