@@ -554,13 +554,30 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 15. POST /api/admin/auth
+// 15. POST /api/admin/auth
   if (pathname === '/api/admin/auth' && method === 'POST') {
     const { passcode } = await parseBody();
-    const secret = env.ADMIN_SECRET || 'vibedump-admin-2026';
-    if (passcode === secret || passcode === 'vibedump-admin-2026') {
-      return json({ success: true, token: passcode });
+    const cleanPass = (passcode || '').trim();
+
+    // 1. Cloudflare Pages Variables and secrets에서 설정한 개인 비밀번호 확인
+    const envSecret = env.ADMIN_SECRET?.trim();
+    if (envSecret) {
+      if (cleanPass === envSecret) {
+        return json({ success: true, token: cleanPass });
+      }
+      return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
     }
+
+    // 2. D1 DB에 저장된 비밀번호 확인
+    if (db) {
+      try {
+        const row = await db.prepare('SELECT value FROM site_settings WHERE key = "custom_admin_password"').first();
+        if (row?.value && cleanPass === String(row.value).trim()) {
+          return json({ success: true, token: cleanPass });
+        }
+      } catch {}
+    }
+
     return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
   }
 
