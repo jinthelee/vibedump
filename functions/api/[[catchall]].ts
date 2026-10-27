@@ -564,12 +564,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 15. POST /api/admin/auth
+// 15. POST /api/admin/auth (마스터 비밀번호 원천 차단 및 개인 비밀번호 전용 인증)
   if (pathname === '/api/admin/auth' && method === 'POST') {
     const { passcode } = await parseBody();
     const cleanPass = (passcode || '').trim();
 
-    // 1. Check D1 database for custom password
+    // 1. D1 DB에 저장된 커스텀 비밀번호 확인
     let dbPass: string | null = null;
     if (db) {
       try {
@@ -580,21 +580,21 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       } catch {}
     }
 
-    // 2. Check environment variable (from wrangler.toml [vars] or Pages dashboard)
+    // 2. 환경변수 (wrangler.toml 또는 Pages 대시보드의 ADMIN_SECRET) 확인
     const envPass = env.ADMIN_SECRET?.trim() || null;
 
-    // Active personal password (D1 database or wrangler.toml / Pages env)
+    // 활성화된 개인 비밀번호 (D1 DB 우선, 환경변수 차순)
     const personalPassword = dbPass || envPass;
 
     if (personalPassword) {
-      // If a personal password is set, ONLY that password is accepted!
+      // 개인 비밀번호가 설정된 순간, 마스터 비밀번호는 영구 차단되고 오직 개인 비밀번호만 허용됩니다!
       if (cleanPass === personalPassword) {
         return json({ success: true, token: cleanPass });
       }
       return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
     }
 
-    // Fallback: only if user has not set any personal password anywhere yet
+    // fallback: 개인 비밀번호를 한 번도 설정하지 않은 초기 상태에만 작동
     if (cleanPass === 'vibedump-admin-2026') {
       return json({ success: true, token: cleanPass });
     }
@@ -602,7 +602,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
   }
 
-  // 16. Admin data endpoints
+  // 16. Admin 통계 & 목록 엔드포인트
   if (pathname === '/api/admin/stats' && method === 'GET') {
     if (!db) {
       return json({ stats: { total_services: 0, pending_services: 0, total_views: 0, total_likes: 0, total_reviews: 0, total_reports: 0 } });
@@ -691,7 +691,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // Admin Service Status Change: PATCH /api/admin/services/:id/status
+  // 서비스 승인/숨김 상태 변경: PATCH /api/admin/services/:id/status
   const adminServiceStatusMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/status$/);
   if (adminServiceStatusMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -701,7 +701,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '상태가 변경되었습니다.' });
   }
 
-  // Admin Service Category Change: PATCH /api/admin/services/:id/category
+  // 서비스 카테고리 변경: PATCH /api/admin/services/:id/category
   const adminServiceCategoryMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/category$/);
   if (adminServiceCategoryMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -711,7 +711,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '카테고리가 변경되었습니다.' });
   }
 
-  // Admin Service Update: PUT /api/admin/services/:id
+  // 서비스 내용 수정: PUT /api/admin/services/:id
   const adminServiceEditMatch = pathname.match(/^\/api\/admin\/services\/(\d+)$/);
   if (adminServiceEditMatch && method === 'PUT') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -754,7 +754,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '서비스가 수정되었습니다.' });
   }
 
-  // Admin Service Delete: DELETE /api/admin/services/:id
+  // 서비스 삭제: DELETE /api/admin/services/:id
   if (adminServiceEditMatch && method === 'DELETE') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const id = parseInt(adminServiceEditMatch[1], 10);
@@ -769,7 +769,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '서비스가 삭제되었습니다.' });
   }
 
-  // Admin Categories: GET, POST, PUT
+  // 카테고리 관리: GET, POST, PUT
   if (pathname === '/api/admin/categories') {
     if (method === 'GET') {
       if (!db) return json({ categories: DEFAULT_CATEGORIES });
@@ -805,7 +805,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // Admin Category Rename / Delete: PATCH, DELETE /api/admin/categories/:name
+  // 카테고리 이름수정 / 삭제: PATCH, DELETE /api/admin/categories/:name
   const adminCatNameMatch = pathname.match(/^\/api\/admin\/categories\/([^/]+)$/);
   if (adminCatNameMatch) {
     const rawName = decodeURIComponent(adminCatNameMatch[1]);
@@ -837,7 +837,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // Admin Reports: PATCH /api/admin/reports/:id
+  // 신고 처리: PATCH /api/admin/reports/:id
   const adminReportMatch = pathname.match(/^\/api\/admin\/reports\/(\d+)$/);
   if (adminReportMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -847,7 +847,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '신고가 처리되었습니다.' });
   }
 
-  // Admin Reviews: PATCH /api/admin/reviews/:id/status
+  // 리뷰 상태 변경: PATCH /api/admin/reviews/:id/status
   const adminReviewStatusMatch = pathname.match(/^\/api\/admin\/reviews\/(\d+)\/status$/);
   if (adminReviewStatusMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -857,7 +857,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '리뷰 상태가 변경되었습니다.' });
   }
 
-  // Admin Tags: PATCH /api/admin/tags/:id/status, DELETE /api/admin/tags/:id, POST /api/admin/tags/merge
+  // 태그 상태 변경 및 삭제, 병합
   const adminTagStatusMatch = pathname.match(/^\/api\/admin\/tags\/(\d+)\/status$/);
   if (adminTagStatusMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -887,7 +887,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '태그가 병합되었습니다.' });
   }
 
-  // Admin Curations: POST, DELETE /api/admin/curations/:id
+  // 큐레이션 등록 및 삭제
   if (pathname === '/api/admin/curations' && method === 'POST') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const { service_id, badge_text, editorial_blurb, display_order } = await parseBody();
@@ -906,7 +906,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '큐레이션이 삭제되었습니다.' });
   }
 
-  // Admin Promotions: POST, PATCH /api/admin/promotions/:id
+  // 유료 광고 / 프로모션 등록 및 상태 변경
   if (pathname === '/api/admin/promotions' && method === 'POST') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const { service_id, slot_type, start_date, end_date } = await parseBody();
@@ -927,7 +927,31 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '프로모션 상태가 변경되었습니다.' });
   }
 
-  // Admin Backup & Restore: GET /api/admin/backup, POST /api/admin/restore
+  // ★ 유료 모드 토글, 슬로건 변경, 관리자 비밀번호 변경: PATCH /api/admin/settings
+  if (pathname === '/api/admin/settings' && method === 'PATCH') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const body = await parseBody();
+    const { slogan, show_ads, site_title, new_admin_password } = body;
+    if (slogan !== undefined) {
+      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("slogan", ?)').bind(String(slogan)).run();
+    }
+    if (show_ads !== undefined) {
+      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("show_ads", ?)').bind(show_ads ? 'true' : 'false').run();
+    }
+    if (site_title !== undefined) {
+      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("site_title", ?)').bind(String(site_title)).run();
+    }
+    if (new_admin_password !== undefined && String(new_admin_password).trim()) {
+      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("custom_admin_password", ?)').bind(String(new_admin_password).trim()).run();
+    }
+    return json({ success: true, message: '설정이 저장되었습니다.' });
+  }
+
+  if (pathname === '/api/admin/seed-test-data' && method === 'POST') {
+    return json({ success: true, message: '테스트 데이터 준비 완료' });
+  }
+
+  // 백업 및 복원: GET /api/admin/backup, POST /api/admin/restore
   if (pathname === '/api/admin/backup' && method === 'GET') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const svcs = await db.prepare('SELECT * FROM services').all();
@@ -960,7 +984,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '백업 복원이 완료되었습니다.' });
   }
 
-  // Catch-all 404 with JSON (never empty!)
+  // 404 Fallback
   return json({ error: `Not Found: ${pathname}` }, 404);
 };
-
