@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, ExternalLink, Heart, Sparkles, Eye } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Heart, Sparkles, Eye, ArrowUpRight } from 'lucide-react';
 import { Curation, Service } from '../types';
 
 interface CurationsSliderProps {
@@ -13,6 +13,7 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
   curations,
   onSelectService,
   onOpenExternalNotice,
+  showAds = false,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -57,6 +58,11 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
           <h3 className="font-display text-lg text-[#0A0A0A] tracking-tight">
             에디터 큐레이션 <span className="text-xs font-sans font-normal text-[#52525B]">/ 주목할 만한 바이브 프로젝트</span>
           </h3>
+          {showAds && (
+            <span className="hidden sm:inline-block bg-[#0A0A0A] text-[#FFD23F] font-mono text-[10px] font-black px-2 py-0.5 rounded border border-[#0A0A0A]">
+              SPONSORED SPOTLIGHT
+            </span>
+          )}
         </div>
 
         {/* Carousel controls */}
@@ -83,11 +89,12 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
         )}
       </div>
 
-      {/* Main Banner Card (배경 클릭 시 이동 X) */}
+      {/* Main Sliding Banner Card with stable height */}
       <div
         onMouseEnter={() => setIsPaused(true)}
         onMouseLeave={() => setIsPaused(false)}
-        className="relative overflow-hidden bg-gradient-to-br from-[#FFFBEA] via-white to-[#F6F5EE] border-3 border-[#0A0A0A] rounded-2xl p-5 sm:p-6 shadow-[6px_6px_0_#0A0A0A] transition-all"
+        onClick={() => onSelectService(current as any)}
+        className="relative overflow-hidden bg-gradient-to-br from-[#FFFBEA] via-white to-[#F6F5EE] border-3 border-[#0A0A0A] rounded-2xl p-5 sm:p-6 shadow-[6px_6px_0_#0A0A0A] hover:shadow-[8px_8px_0_#0A0A0A] transition-all cursor-pointer group"
       >
         {/* Decorative corner tag */}
         <div className="absolute top-0 right-0 bg-[#FFD23F] border-l-2 border-b-2 border-[#0A0A0A] px-3 py-1 text-[11px] font-black text-[#0A0A0A] rounded-bl-xl shadow-[-1px_1px_0_#0A0A0A] flex items-center gap-1 z-10">
@@ -96,14 +103,9 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-5 md:gap-6 items-stretch min-h-[220px]">
-          {/* Left / Info column */}
+          {/* Left / Info column (7 cols) with stable height distribution */}
           <div className="md:col-span-7 flex flex-col justify-between space-y-3">
             <div className="flex items-center gap-2 flex-wrap">
-              {(current as any).is_sponsored && (
-                <span className="bg-[#0A0A0A] text-[#FFD23F] text-xs font-black px-2.5 py-1 rounded-md border-2 border-[#0A0A0A] shadow-[2px_2px_0_#0A0A0A] tracking-wider">
-                  스폰서
-                </span>
-              )}
               <span className="bg-[#06D6A0] text-[#0A0A0A] text-xs font-black px-2.5 py-1 rounded-md border-2 border-[#0A0A0A] shadow-[2px_2px_0_#0A0A0A]">
                 {current.badge_text || '에디터 픽'}
               </span>
@@ -121,13 +123,9 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
             </div>
 
             <div className="space-y-1.5 flex-1">
-              {/* 이름 클릭 시 사이트 카드 모달 오픈 */}
-              <h4
-                onClick={() => onSelectService(current as any)}
-                className="font-display text-xl sm:text-2xl lg:text-3xl text-[#0A0A0A] leading-tight hover:text-[#1F5FD1] transition-colors cursor-pointer inline-block"
-                title="클릭하여 상세 정보 보기"
-              >
+              <h4 className="font-display text-xl sm:text-2xl lg:text-3xl text-[#0A0A0A] leading-tight group-hover:text-[#1F5FD1] transition-colors flex items-center gap-2">
                 <span className="truncate line-clamp-1">{current.name}</span>
+                <ArrowUpRight className="w-5 h-5 text-neutral-400 group-hover:text-[#1F5FD1] shrink-0 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
               </h4>
               <p className="text-xs sm:text-sm text-[#0A0A0A] font-semibold leading-relaxed line-clamp-1 h-5 overflow-hidden">
                 "{current.editorial_blurb}"
@@ -151,18 +149,22 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
-                {/* 1) 상세보기 버튼 -> 사이트 카드 모달 오픈 */}
                 <button
                   type="button"
-                  onClick={() => onSelectService(current as any)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectService(current as any);
+                  }}
                   className="px-3.5 py-1.5 bg-white hover:bg-[#F1F0E8] text-[#0A0A0A] border-2 border-[#0A0A0A] rounded-lg text-xs font-bold shadow-[2px_2px_0_#0A0A0A] active:translate-x-0.5 transition-all"
                 >
                   상세보기
                 </button>
-                {/* 2) 방문하기 버튼 -> 외부 URL로 바로 이동 */}
                 <button
                   type="button"
-                  onClick={() => onOpenExternalNotice(current as any)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenExternalNotice(current as any);
+                  }}
                   className="px-4 py-1.5 bg-[#FFD23F] hover:bg-[#FFD23F]/90 text-[#0A0A0A] border-2 border-[#0A0A0A] rounded-lg text-xs font-bold shadow-[2px_2px_0_#0A0A0A] active:translate-x-0.5 flex items-center gap-1.5 transition-all"
                 >
                   <span>방문하기</span>
@@ -172,29 +174,28 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
             </div>
           </div>
 
-          {/* Right / 스크린샷 썸네일 클릭 시 사이트 카드 모달 오픈 */}
+          {/* Right / Visual Preview column (5 cols) with fixed height */}
           <div className="md:col-span-5 flex items-center">
-            <div
-              onClick={() => onSelectService(current as any)}
-              className="relative h-[180px] sm:h-[200px] md:h-[215px] w-full rounded-xl overflow-hidden border-2 border-[#0A0A0A] shadow-[4px_4px_0_#0A0A0A] bg-neutral-900 cursor-pointer hover:opacity-95 transition-all group"
-              title="클릭하여 상세 정보 보기"
-            >
+            <div className="relative h-[180px] sm:h-[200px] md:h-[215px] w-full rounded-xl overflow-hidden border-2 border-[#0A0A0A] shadow-[4px_4px_0_#0A0A0A] bg-neutral-900 group-hover:scale-[1.01] transition-transform">
               {current.thumbnail_url || current.screenshot_url ? (
                 <img
                   src={current.thumbnail_url || current.screenshot_url || undefined}
                   alt={current.name}
-                  className="w-full h-full object-cover object-top group-hover:scale-102 transition-transform duration-300"
+                  className="w-full h-full object-cover object-top"
                   onError={(e) => {
                     (e.target as HTMLElement).style.display = 'none';
                   }}
                 />
               ) : null}
 
-              {/* Overlay (URL 도메인만 표시, 바로가기 버튼은 삭제) */}
+              {/* Overlay with Neo-Brutalist Frame details */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent flex flex-col justify-end p-3.5 text-white">
                 <div className="flex items-center justify-between text-xs font-bold">
-                  <span className="font-mono text-[11px] bg-black/70 px-2 py-0.5 rounded backdrop-blur-sm border border-white/20">
+                  <span className="font-mono text-[11px] bg-black/60 px-2 py-0.5 rounded backdrop-blur-sm">
                     {current.url.replace(/^https?:\/\//, '').split('/')[0]}
+                  </span>
+                  <span className="px-2 py-0.5 bg-[#FFD23F] text-[#0A0A0A] font-bold text-[10px] rounded border border-black">
+                    바로가기 ↗
                   </span>
                 </div>
               </div>
@@ -209,7 +210,10 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
               <button
                 key={idx}
                 type="button"
-                onClick={() => setCurrentIndex(idx)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCurrentIndex(idx);
+                }}
                 aria-label={`슬라이드 ${idx + 1}`}
                 className={`h-2 rounded-full transition-all ${
                   currentIndex === idx
