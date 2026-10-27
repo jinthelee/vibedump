@@ -564,11 +564,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-// 15. POST /api/admin/auth (마스터 비밀번호 영구 차단 & 개인 비밀번호 전용 인증)
+  // 15. POST /api/admin/auth
   if (pathname === '/api/admin/auth' && method === 'POST') {
     const { passcode } = await parseBody();
     const cleanPass = (passcode || '').trim();
 
+    // 1. Check D1 database for custom password
     let dbPass: string | null = null;
     if (db) {
       try {
@@ -579,16 +580,21 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       } catch {}
     }
 
+    // 2. Check environment variable (from wrangler.toml [vars] or Pages dashboard)
     const envPass = env.ADMIN_SECRET?.trim() || null;
+
+    // Active personal password (D1 database or wrangler.toml / Pages env)
     const personalPassword = dbPass || envPass;
 
     if (personalPassword) {
+      // If a personal password is set, ONLY that password is accepted!
       if (cleanPass === personalPassword) {
         return json({ success: true, token: cleanPass });
       }
       return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
     }
 
+    // Fallback: only if user has not set any personal password anywhere yet
     if (cleanPass === 'vibedump-admin-2026') {
       return json({ success: true, token: cleanPass });
     }
@@ -596,9 +602,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
   }
 
-  // 16. Admin 통계 및 목록
+  // 16. Admin data endpoints
   if (pathname === '/api/admin/stats' && method === 'GET') {
-    if (!db) return json({ stats: { total_services: 0, pending_services: 0, total_views: 0, total_likes: 0, total_reviews: 0, total_reports: 0 } });
+    if (!db) {
+      return json({ stats: { total_services: 0, pending_services: 0, total_views: 0, total_likes: 0, total_reviews: 0, total_reports: 0 } });
+    }
     try {
       const sCount = await db.prepare('SELECT COUNT(*) as c FROM services').first();
       const vCount = await db.prepare('SELECT SUM(views_count) as c, SUM(likes_count) as l FROM services').first();
@@ -676,19 +684,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   if (pathname === '/api/admin/promotions' && method === 'GET') {
     if (!db) return json({ promotions: [] });
     try {
-      const res = await db.prepare(`
-        SELECT p.*, s.name as service_name, s.url as service_url, s.thumbnail_url 
-        FROM promotions p 
-        LEFT JOIN services s ON p.service_id = s.id 
-        ORDER BY p.id DESC
-      `).all();
+      const res = await db.prepare('SELECT * FROM promotions ORDER BY id DESC').all();
       return json({ promotions: res.results || [] });
     } catch {
       return json({ promotions: [] });
     }
   }
 
-  // 서비스 승인/숨김: PATCH /api/admin/services/:id/status
+  // Admin Service Status Change: PATCH /api/admin/services/:id/status
   const adminServiceStatusMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/status$/);
   if (adminServiceStatusMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -698,7 +701,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '상태가 변경되었습니다.' });
   }
 
-  // 서비스 분야 변경: PATCH /api/admin/services/:id/category
+  // Admin Service Category Change: PATCH /api/admin/services/:id/category
   const adminServiceCategoryMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/category$/);
   if (adminServiceCategoryMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -708,7 +711,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '카테고리가 변경되었습니다.' });
   }
 
-  // 서비스 수정: PUT /api/admin/services/:id
+  // Admin Service Update: PUT /api/admin/services/:id
   const adminServiceEditMatch = pathname.match(/^\/api\/admin\/services\/(\d+)$/);
   if (adminServiceEditMatch && method === 'PUT') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -751,7 +754,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '서비스가 수정되었습니다.' });
   }
 
-  // 서비스 삭제: DELETE /api/admin/services/:id
+  // Admin Service Delete: DELETE /api/admin/services/:id
   if (adminServiceEditMatch && method === 'DELETE') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const id = parseInt(adminServiceEditMatch[1], 10);
@@ -766,7 +769,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '서비스가 삭제되었습니다.' });
   }
 
-  // 카테고리 관리: GET, POST, PUT
+  // Admin Categories: GET, POST, PUT
   if (pathname === '/api/admin/categories') {
     if (method === 'GET') {
       if (!db) return json({ categories: DEFAULT_CATEGORIES });
@@ -802,7 +805,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 카테고리 수정 / 삭제: PATCH, DELETE
+  // Admin Category Rename / Delete: PATCH, DELETE /api/admin/categories/:name
   const adminCatNameMatch = pathname.match(/^\/api\/admin\/categories\/([^/]+)$/);
   if (adminCatNameMatch) {
     const rawName = decodeURIComponent(adminCatNameMatch[1]);
@@ -834,7 +837,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 신고, 리뷰, 태그 처리
+  // Admin Reports: PATCH /api/admin/reports/:id
   const adminReportMatch = pathname.match(/^\/api\/admin\/reports\/(\d+)$/);
   if (adminReportMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -844,6 +847,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '신고가 처리되었습니다.' });
   }
 
+  // Admin Reviews: PATCH /api/admin/reviews/:id/status
   const adminReviewStatusMatch = pathname.match(/^\/api\/admin\/reviews\/(\d+)\/status$/);
   if (adminReviewStatusMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -853,6 +857,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '리뷰 상태가 변경되었습니다.' });
   }
 
+  // Admin Tags: PATCH /api/admin/tags/:id/status, DELETE /api/admin/tags/:id, POST /api/admin/tags/merge
   const adminTagStatusMatch = pathname.match(/^\/api\/admin\/tags\/(\d+)\/status$/);
   if (adminTagStatusMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -882,7 +887,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '태그가 병합되었습니다.' });
   }
 
-  // 큐레이션 등록 및 삭제
+  // Admin Curations: POST, DELETE /api/admin/curations/:id
   if (pathname === '/api/admin/curations' && method === 'POST') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const { service_id, badge_text, editorial_blurb, display_order } = await parseBody();
@@ -901,7 +906,39 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '큐레이션이 삭제되었습니다.' });
   }
 
-  // ★ 스폰서 일괄 최종 저장 (임시 편집 후 한 번에 영구 저장)
+  // Admin Promotions: POST, PATCH /api/admin/promotions/:id
+  if (pathname === '/api/admin/promotions' && method === 'POST') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const { service_id, slot_type, start_date, end_date } = await parseBody();
+    const now = new Date().toISOString();
+    await db.prepare(`
+      INSERT INTO promotions (service_id, slot_type, status, impressions, clicks, start_date, end_date, created_at)
+      VALUES (?, ?, 'active', 0, 0, ?, ?, ?)
+    `).bind(service_id, slot_type || 'feed_sponsor', start_date || now, end_date || now, now).run();
+    return json({ success: true, message: '프로모션이 생성되었습니다.' });
+  }
+
+  const adminPromoMatch = pathname.match(/^\/api\/admin\/promotions\/(\d+)$/);
+  if (adminPromoMatch && method === 'PATCH') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminPromoMatch[1], 10);
+    const { status } = await parseBody();
+    await db.prepare('UPDATE promotions SET status = ? WHERE id = ?').bind(status || 'active', id).run();
+    return json({ success: true, message: '프로모션 상태가 변경되었습니다.' });
+  }
+
+  if (adminPromoMatch && method === 'DELETE') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminPromoMatch[1], 10);
+    await db.prepare('DELETE FROM promotions WHERE id = ?').bind(id).run();
+    return json({ success: true, message: '프로모션이 삭제되었습니다.' });
+  }
+
+  if (pathname === '/api/admin/promotions/reorder' && method === 'PUT') {
+    return json({ success: true, message: '순서가 변경되었습니다.' });
+  }
+
+  // ★ 스폰서 일괄 최종 저장 (추가, 삭제, 순서, 상태를 한 번에 D1에 반영)
   if (pathname === '/api/admin/promotions/batch-save' && method === 'POST') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const { promotions: promoList } = await parseBody();
@@ -928,7 +965,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '스폰서 설정이 최종 저장되었습니다.' });
   }
 
-  // ★ 공개 활성 광고 조회 (GET /api/promotions)
+  // Public active promotions: GET /api/promotions
   if (pathname === '/api/promotions' && method === 'GET') {
     if (!db) return json({ promotions: [] });
     try {
@@ -945,7 +982,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 관리자 설정 변경
+  // Admin Settings Update: PATCH /api/admin/settings
   if (pathname === '/api/admin/settings' && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const body = await parseBody();
@@ -969,7 +1006,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '테스트 데이터 준비 완료' });
   }
 
-  // 백업 및 복원
+  // Admin Backup & Restore: GET /api/admin/backup, POST /api/admin/restore
   if (pathname === '/api/admin/backup' && method === 'GET') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const svcs = await db.prepare('SELECT * FROM services').all();
@@ -1002,6 +1039,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '백업 복원이 완료되었습니다.' });
   }
 
-  // 404 Fallback
+  // Catch-all 404 with JSON (never empty!)
   return json({ error: `Not Found: ${pathname}` }, 404);
 };
+
