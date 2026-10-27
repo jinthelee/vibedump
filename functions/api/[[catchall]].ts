@@ -68,7 +68,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   }
 
-  const db = env.DB;
+  // Flexible D1 database resolution: auto-detects D1 instance regardless of binding variable name
+  let db: any = env.DB;
+  if (!db || typeof db.prepare !== 'function') {
+    for (const key of Object.keys(env || {})) {
+      const val = (env as any)[key];
+      if (val && typeof val.prepare === 'function') {
+        db = val;
+        break;
+      }
+    }
+  }
 
   // Helper to safely parse JSON body
   async function parseBody(): Promise<any> {
@@ -554,28 +564,39 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-// 15. POST /api/admin/auth
+  // 15. POST /api/admin/auth
   if (pathname === '/api/admin/auth' && method === 'POST') {
     const { passcode } = await parseBody();
     const cleanPass = (passcode || '').trim();
 
-    // 1. Cloudflare Pages Variables and secrets에서 설정한 개인 비밀번호 확인
-    const envSecret = env.ADMIN_SECRET?.trim();
-    if (envSecret) {
-      if (cleanPass === envSecret) {
+    // 1. Check D1 database for custom password
+    let dbPass: string | null = null;
+    if (db) {
+      try {
+        const row = await db.prepare('SELECT value FROM site_settings WHERE key = "custom_admin_password"').first();
+        if (row?.value && String(row.value).trim()) {
+          dbPass = String(row.value).trim();
+        }
+      } catch {}
+    }
+
+    // 2. Check environment variable (from wrangler.toml [vars] or Pages dashboard)
+    const envPass = env.ADMIN_SECRET?.trim() || null;
+
+    // Active personal password (D1 database or wrangler.toml / Pages env)
+    const personalPassword = dbPass || envPass;
+
+    if (personalPassword) {
+      // If a personal password is set, ONLY that password is accepted!
+      if (cleanPass === personalPassword) {
         return json({ success: true, token: cleanPass });
       }
       return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
     }
 
-    // 2. D1 DB에 저장된 비밀번호 확인
-    if (db) {
-      try {
-        const row = await db.prepare('SELECT value FROM site_settings WHERE key = "custom_admin_password"').first();
-        if (row?.value && cleanPass === String(row.value).trim()) {
-          return json({ success: true, token: cleanPass });
-        }
-      } catch {}
+    // Fallback: only if user has not set any personal password anywhere yet
+    if (cleanPass === 'vibedump-admin-2026') {
+      return json({ success: true, token: cleanPass });
     }
 
     return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
@@ -670,14 +691,273 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  if (pathname === '/api/admin/settings' && method === 'PATCH') {
+  // Admin Service Status Change: PATCH /api/admin/services/:id/status
+  const adminServiceStatusMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/status$/);
+  if (adminServiceStatusMatch && method === 'PATCH') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminServiceStatusMatch[1], 10);
+    const { status } = await parseBody();
+    await db.prepare('UPDATE services SET status = ?, updated_at = ? WHERE id = ?').bind(status || 'approved', new Date().toISOString(), id).run();
+    return json({ success: true, message: '상태가 변경되었습니다.' });
+  }
+
+  // Admin Service Category Change: PATCH /api/admin/services/:id/category
+  const adminServiceCategoryMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/category$/);
+  if (adminServiceCategoryMatch && method === 'PATCH') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminServiceCategoryMatch[1], 10);
+    const { category } = await parseBody();
+    await db.prepare('UPDATE services SET category = ?, updated_at = ? WHERE id = ?').bind(category, new Date().toISOString(), id).run();
+    return json({ success: true, message: '카테고리가 변경되었습니다.' });
+  }
+
+  // Admin Service Update: PUT /api/admin/services/:id
+  const adminServiceEditMatch = pathname.match(/^\/api\/admin\/services\/(\d+)$/);
+  if (adminServiceEditMatch && method === 'PUT') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminServiceEditMatch[1], 10);
     const body = await parseBody();
-    if (db) {
-      if (body.slogan) await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("slogan", ?)').bind(body.slogan).run();
-      if (body.site_title) await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("site_title", ?)').bind(body.site_title).run();
-      if (body.show_ads !== undefined) await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("show_ads", ?)').bind(String(body.show_ads)).run();
+    const { name, url: sUrl, short_desc, description, category, tags, thumbnail_url, screenshot_url, maker_name, status } = body;
+    const now = new Date().toISOString();
+
+    await db.prepare(`
+      UPDATE services SET
+        name = COALESCE(?, name),
+        url = COALESCE(?, url),
+        short_desc = COALESCE(?, short_desc),
+        description = COALESCE(?, description),
+        category = COALESCE(?, category),
+        thumbnail_url = ?,
+        screenshot_url = ?,
+        maker_name = ?,
+        status = COALESCE(?, status),
+        updated_at = ?
+      WHERE id = ?
+    `).bind(
+      name, sUrl, short_desc, description, category,
+      thumbnail_url || null, screenshot_url || null, maker_name || null, status || 'approved',
+      now, id
+    ).run();
+
+    if (Array.isArray(tags)) {
+      await db.prepare('DELETE FROM service_tags WHERE service_id = ?').bind(id).run();
+      for (const t of tags.slice(0, 5)) {
+        const tagName = String(t).trim();
+        if (!tagName) continue;
+        await db.prepare('INSERT OR IGNORE INTO tags (name, normalized_name, status, created_at) VALUES (?, ?, "approved", ?)').bind(tagName, normalizeTagName(tagName), now).run();
+        const tagRow = await db.prepare('SELECT id FROM tags WHERE name = ?').bind(tagName).first();
+        if (tagRow) {
+          await db.prepare('INSERT OR IGNORE INTO service_tags (service_id, tag_id) VALUES (?, ?)').bind(id, tagRow.id).run();
+        }
+      }
     }
-    return json({ success: true, message: '설정 저장 완료' });
+    return json({ success: true, message: '서비스가 수정되었습니다.' });
+  }
+
+  // Admin Service Delete: DELETE /api/admin/services/:id
+  if (adminServiceEditMatch && method === 'DELETE') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminServiceEditMatch[1], 10);
+    await db.prepare('DELETE FROM service_tags WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM reviews WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM reactions WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM favorites WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM maker_posts WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM curations WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM promotions WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM services WHERE id = ?').bind(id).run();
+    return json({ success: true, message: '서비스가 삭제되었습니다.' });
+  }
+
+  // Admin Categories: GET, POST, PUT
+  if (pathname === '/api/admin/categories') {
+    if (method === 'GET') {
+      if (!db) return json({ categories: DEFAULT_CATEGORIES });
+      try {
+        const row = await db.prepare('SELECT value FROM site_settings WHERE key = "categories"').first();
+        if (row?.value) {
+          const list = JSON.parse(row.value);
+          if (Array.isArray(list) && list.length > 0) return json({ categories: list });
+        }
+      } catch {}
+      return json({ categories: DEFAULT_CATEGORIES });
+    }
+    if (method === 'POST') {
+      const { name } = await parseBody();
+      if (!name) return json({ error: '이름 필요' }, 400);
+      let list = [...DEFAULT_CATEGORIES];
+      if (db) {
+        try {
+          const row = await db.prepare('SELECT value FROM site_settings WHERE key = "categories"').first();
+          if (row?.value) list = JSON.parse(row.value);
+        } catch {}
+        if (!list.includes(name.trim())) list.push(name.trim());
+        await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("categories", ?)').bind(JSON.stringify(list)).run();
+      }
+      return json({ success: true, categories: list });
+    }
+    if (method === 'PUT') {
+      const { categories } = await parseBody();
+      if (Array.isArray(categories) && db) {
+        await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("categories", ?)').bind(JSON.stringify(categories)).run();
+      }
+      return json({ success: true, categories: categories || DEFAULT_CATEGORIES });
+    }
+  }
+
+  // Admin Category Rename / Delete: PATCH, DELETE /api/admin/categories/:name
+  const adminCatNameMatch = pathname.match(/^\/api\/admin\/categories\/([^/]+)$/);
+  if (adminCatNameMatch) {
+    const rawName = decodeURIComponent(adminCatNameMatch[1]);
+    if (method === 'PATCH') {
+      const { new_name } = await parseBody();
+      let list = [...DEFAULT_CATEGORIES];
+      if (db) {
+        try {
+          const row = await db.prepare('SELECT value FROM site_settings WHERE key = "categories"').first();
+          if (row?.value) list = JSON.parse(row.value);
+        } catch {}
+        list = list.map(c => c === rawName ? (new_name || c) : c);
+        await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("categories", ?)').bind(JSON.stringify(list)).run();
+        await db.prepare('UPDATE services SET category = ? WHERE category = ?').bind(new_name, rawName).run();
+      }
+      return json({ success: true, categories: list });
+    }
+    if (method === 'DELETE') {
+      let list = [...DEFAULT_CATEGORIES];
+      if (db) {
+        try {
+          const row = await db.prepare('SELECT value FROM site_settings WHERE key = "categories"').first();
+          if (row?.value) list = JSON.parse(row.value);
+        } catch {}
+        list = list.filter(c => c !== rawName);
+        await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("categories", ?)').bind(JSON.stringify(list)).run();
+      }
+      return json({ success: true, categories: list });
+    }
+  }
+
+  // Admin Reports: PATCH /api/admin/reports/:id
+  const adminReportMatch = pathname.match(/^\/api\/admin\/reports\/(\d+)$/);
+  if (adminReportMatch && method === 'PATCH') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminReportMatch[1], 10);
+    const { status } = await parseBody();
+    await db.prepare('UPDATE reports SET status = ? WHERE id = ?').bind(status || 'resolved', id).run();
+    return json({ success: true, message: '신고가 처리되었습니다.' });
+  }
+
+  // Admin Reviews: PATCH /api/admin/reviews/:id/status
+  const adminReviewStatusMatch = pathname.match(/^\/api\/admin\/reviews\/(\d+)\/status$/);
+  if (adminReviewStatusMatch && method === 'PATCH') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminReviewStatusMatch[1], 10);
+    const { status } = await parseBody();
+    await db.prepare('UPDATE reviews SET status = ? WHERE id = ?').bind(status || 'published', id).run();
+    return json({ success: true, message: '리뷰 상태가 변경되었습니다.' });
+  }
+
+  // Admin Tags: PATCH /api/admin/tags/:id/status, DELETE /api/admin/tags/:id, POST /api/admin/tags/merge
+  const adminTagStatusMatch = pathname.match(/^\/api\/admin\/tags\/(\d+)\/status$/);
+  if (adminTagStatusMatch && method === 'PATCH') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminTagStatusMatch[1], 10);
+    const { status } = await parseBody();
+    await db.prepare('UPDATE tags SET status = ? WHERE id = ?').bind(status || 'approved', id).run();
+    return json({ success: true, message: '태그 상태가 변경되었습니다.' });
+  }
+
+  const adminTagDeleteMatch = pathname.match(/^\/api\/admin\/tags\/(\d+)$/);
+  if (adminTagDeleteMatch && method === 'DELETE') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminTagDeleteMatch[1], 10);
+    await db.prepare('DELETE FROM service_tags WHERE tag_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM tags WHERE id = ?').bind(id).run();
+    return json({ success: true, message: '태그가 삭제되었습니다.' });
+  }
+
+  if (pathname === '/api/admin/tags/merge' && method === 'POST') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const { source_tag_id, target_tag_id } = await parseBody();
+    if (source_tag_id && target_tag_id) {
+      await db.prepare('UPDATE OR IGNORE service_tags SET tag_id = ? WHERE tag_id = ?').bind(target_tag_id, source_tag_id).run();
+      await db.prepare('DELETE FROM service_tags WHERE tag_id = ?').bind(source_tag_id).run();
+      await db.prepare('DELETE FROM tags WHERE id = ?').bind(source_tag_id).run();
+    }
+    return json({ success: true, message: '태그가 병합되었습니다.' });
+  }
+
+  // Admin Curations: POST, DELETE /api/admin/curations/:id
+  if (pathname === '/api/admin/curations' && method === 'POST') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const { service_id, badge_text, editorial_blurb, display_order } = await parseBody();
+    await db.prepare(`
+      INSERT INTO curations (service_id, badge_text, editorial_blurb, display_order, is_active, created_at)
+      VALUES (?, ?, ?, ?, 1, ?)
+    `).bind(service_id, badge_text || '에디터 픽', editorial_blurb || '', display_order || 0, new Date().toISOString()).run();
+    return json({ success: true, message: '큐레이션이 등록되었습니다.' });
+  }
+
+  const adminCurationDeleteMatch = pathname.match(/^\/api\/admin\/curations\/(\d+)$/);
+  if (adminCurationDeleteMatch && method === 'DELETE') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminCurationDeleteMatch[1], 10);
+    await db.prepare('DELETE FROM curations WHERE id = ?').bind(id).run();
+    return json({ success: true, message: '큐레이션이 삭제되었습니다.' });
+  }
+
+  // Admin Promotions: POST, PATCH /api/admin/promotions/:id
+  if (pathname === '/api/admin/promotions' && method === 'POST') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const { service_id, slot_type, start_date, end_date } = await parseBody();
+    const now = new Date().toISOString();
+    await db.prepare(`
+      INSERT INTO promotions (service_id, slot_type, status, impressions, clicks, start_date, end_date, created_at)
+      VALUES (?, ?, 'active', 0, 0, ?, ?, ?)
+    `).bind(service_id, slot_type || 'feed_sponsor', start_date || now, end_date || now, now).run();
+    return json({ success: true, message: '프로모션이 생성되었습니다.' });
+  }
+
+  const adminPromoMatch = pathname.match(/^\/api\/admin\/promotions\/(\d+)$/);
+  if (adminPromoMatch && method === 'PATCH') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminPromoMatch[1], 10);
+    const { status } = await parseBody();
+    await db.prepare('UPDATE promotions SET status = ? WHERE id = ?').bind(status || 'active', id).run();
+    return json({ success: true, message: '프로모션 상태가 변경되었습니다.' });
+  }
+
+  // Admin Backup & Restore: GET /api/admin/backup, POST /api/admin/restore
+  if (pathname === '/api/admin/backup' && method === 'GET') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const svcs = await db.prepare('SELECT * FROM services').all();
+    const tgs = await db.prepare('SELECT * FROM tags').all();
+    const stgs = await db.prepare('SELECT * FROM service_tags').all();
+    const revs = await db.prepare('SELECT * FROM reviews').all();
+    const sets = await db.prepare('SELECT * FROM site_settings').all();
+    return json({
+      version: 1,
+      exported_at: new Date().toISOString(),
+      services: svcs.results || [],
+      tags: tgs.results || [],
+      service_tags: stgs.results || [],
+      reviews: revs.results || [],
+      site_settings: sets.results || []
+    });
+  }
+
+  if (pathname === '/api/admin/restore' && method === 'POST') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const { backup } = await parseBody();
+    if (backup && Array.isArray(backup.services)) {
+      for (const s of backup.services) {
+        await db.prepare(`
+          INSERT OR REPLACE INTO services (id, name, url, short_desc, description, category, thumbnail_url, screenshot_url, maker_name, maker_email, maker_code_hash, status, views_count, likes_count, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(s.id, s.name, s.url, s.short_desc, s.description, s.category, s.thumbnail_url, s.screenshot_url, s.maker_name, s.maker_email, s.maker_code_hash || 'hash', s.status || 'approved', s.views_count || 0, s.likes_count || 0, s.created_at || new Date().toISOString(), s.updated_at || new Date().toISOString()).run();
+      }
+    }
+    return json({ success: true, message: '백업 복원이 완료되었습니다.' });
   }
 
   // Catch-all 404 with JSON (never empty!)
