@@ -906,7 +906,25 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '큐레이션이 삭제되었습니다.' });
   }
 
-  // 유료 광고 / 프로모션 등록 및 상태 변경
+  // 유료 광고 (프로모션) CRUD 및 노출
+
+  // 1) 관리자 프로모션 목록 조회
+  if (pathname === '/api/admin/promotions' && method === 'GET') {
+    if (!db) return json({ promotions: [] });
+    try {
+      const res = await db.prepare(`
+        SELECT p.*, s.name as service_name, s.url as service_url, s.thumbnail_url 
+        FROM promotions p 
+        LEFT JOIN services s ON p.service_id = s.id 
+        ORDER BY p.id DESC
+      `).all();
+      return json({ promotions: res.results || [] });
+    } catch {
+      return json({ promotions: [] });
+    }
+  }
+
+  // 2) 유료 광고 등록 (4개 슬롯: feed_sponsor, hero_sponsor, banner_sponsor, badge_sponsor)
   if (pathname === '/api/admin/promotions' && method === 'POST') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const { service_id, slot_type, start_date, end_date } = await parseBody();
@@ -915,19 +933,52 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       INSERT INTO promotions (service_id, slot_type, status, impressions, clicks, start_date, end_date, created_at)
       VALUES (?, ?, 'active', 0, 0, ?, ?, ?)
     `).bind(service_id, slot_type || 'feed_sponsor', start_date || now, end_date || now, now).run();
-    return json({ success: true, message: '프로모션이 생성되었습니다.' });
+    return json({ success: true, message: '유료 광고가 등록되었습니다.' });
   }
 
+  // 3) 유료 광고 상태 변경 / 슬롯 수정
   const adminPromoMatch = pathname.match(/^\/api\/admin\/promotions\/(\d+)$/);
   if (adminPromoMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const id = parseInt(adminPromoMatch[1], 10);
-    const { status } = await parseBody();
-    await db.prepare('UPDATE promotions SET status = ? WHERE id = ?').bind(status || 'active', id).run();
-    return json({ success: true, message: '프로모션 상태가 변경되었습니다.' });
+    const { status, slot_type } = await parseBody();
+    if (slot_type) {
+      await db.prepare('UPDATE promotions SET slot_type = ? WHERE id = ?').bind(slot_type, id).run();
+    }
+    if (status) {
+      await db.prepare('UPDATE promotions SET status = ? WHERE id = ?').bind(status, id).run();
+    }
+    return json({ success: true, message: '프로모션이 수정되었습니다.' });
   }
 
-  // ★ 유료 모드 토글, 슬로건 변경, 관리자 비밀번호 변경: PATCH /api/admin/settings
+  // 4) 유료 광고 삭제 (DELETE)
+  if (adminPromoMatch && method === 'DELETE') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminPromoMatch[1], 10);
+    await db.prepare('DELETE FROM promotions WHERE id = ?').bind(id).run();
+    return json({ success: true, message: '프로모션이 삭제되었습니다.' });
+  }
+
+  // 5) 사용자 화면 노출용 공개 광고 조회
+  if (pathname === '/api/promotions' && method === 'GET') {
+    if (!db) return json({ promotions: [] });
+    try {
+      const res = await db.prepare(`
+        SELECT p.*, s.name as service_name, s.url as service_url, s.short_desc, s.thumbnail_url 
+        FROM promotions p 
+        JOIN services s ON p.service_id = s.id 
+        WHERE p.status = 'active' 
+        ORDER BY p.id DESC
+      `).all();
+      return json({ promotions: res.results || [] });
+    } catch {
+      return json({ promotions: [] });
+    }
+  }
+
+  // ==========================================
+  // 사이트 설정 (유료모드 토글, 슬로건, 관리자 비밀번호)
+  // ==========================================
   if (pathname === '/api/admin/settings' && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const body = await parseBody();
@@ -951,7 +1002,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '테스트 데이터 준비 완료' });
   }
 
-  // 백업 및 복원: GET /api/admin/backup, POST /api/admin/restore
+  // ==========================================
+  // 백업 및 복원
+  // ==========================================
   if (pathname === '/api/admin/backup' && method === 'GET') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const svcs = await db.prepare('SELECT * FROM services').all();
