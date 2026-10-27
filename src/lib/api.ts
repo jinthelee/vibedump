@@ -541,7 +541,14 @@ export async function fetchSettings(): Promise<{ settings: { slogan: string; slo
     };
   }
 }
-
+export async function adminSaveAllPromotions(promotions: Promotion[], token: string) {
+  const res = await fetch(`${BASE_URL}/admin/promotions/batch-save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({ promotions }),
+  });
+  return await handleResponse(res, '스폰서 일괄 저장 실패');
+}
 export async function updateAdminSettings(
   settings: { slogan?: string; show_ads?: boolean; site_title?: string; new_admin_password?: string } | string,
   token: string
