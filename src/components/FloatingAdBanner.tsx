@@ -17,7 +17,7 @@ export const FloatingAdBanner: React.FC = () => {
             AD
           </span>
           <span className="font-bold text-[#0A0A0A] truncate">
-            자체 광고 타임: 이한울 심바 번쩍 쭈~압~
+            자체 광고 타임: 한울이 번쩍 들어서 자랑하기
           </span>
         </div>
 
