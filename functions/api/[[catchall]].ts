@@ -927,85 +927,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '프로모션 상태가 변경되었습니다.' });
   }
 
-  if (adminPromoMatch && method === 'DELETE') {
-    if (!db) return json({ error: 'DB 연결 필요' }, 503);
-    const id = parseInt(adminPromoMatch[1], 10);
-    await db.prepare('DELETE FROM promotions WHERE id = ?').bind(id).run();
-    return json({ success: true, message: '프로모션이 삭제되었습니다.' });
-  }
-
-  if (pathname === '/api/admin/promotions/reorder' && method === 'PUT') {
-    return json({ success: true, message: '순서가 변경되었습니다.' });
-  }
-
-  // ★ 스폰서 일괄 최종 저장 (추가, 삭제, 순서, 상태를 한 번에 D1에 반영)
-  if (pathname === '/api/admin/promotions/batch-save' && method === 'POST') {
-    if (!db) return json({ error: 'DB 연결 필요' }, 503);
-    const { promotions: promoList } = await parseBody();
-    if (Array.isArray(promoList)) {
-      await db.prepare('DELETE FROM promotions').run();
-      const now = new Date().toISOString();
-      for (const p of promoList) {
-        await db.prepare(`
-          INSERT INTO promotions (id, service_id, slot_type, status, impressions, clicks, start_date, end_date, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-          p.id || null,
-          Number(p.service_id),
-          p.slot_type || 'feed_sponsor',
-          p.status || 'active',
-          p.impressions || 0,
-          p.clicks || 0,
-          p.start_date || now,
-          p.end_date || now,
-          p.created_at || now
-        ).run();
-      }
-    }
-    return json({ success: true, message: '스폰서 설정이 최종 저장되었습니다.' });
-  }
-
-  // Public active promotions: GET /api/promotions
-  if (pathname === '/api/promotions' && method === 'GET') {
-    if (!db) return json({ promotions: [] });
-    try {
-      const res = await db.prepare(`
-        SELECT p.*, s.name as service_name, s.url as service_url, s.short_desc, s.thumbnail_url 
-        FROM promotions p 
-        JOIN services s ON p.service_id = s.id 
-        WHERE p.status = 'active' 
-        ORDER BY p.id DESC
-      `).all();
-      return json({ promotions: res.results || [] });
-    } catch {
-      return json({ promotions: [] });
-    }
-  }
-
-  // Admin Settings Update: PATCH /api/admin/settings
-  if (pathname === '/api/admin/settings' && method === 'PATCH') {
-    if (!db) return json({ error: 'DB 연결 필요' }, 503);
-    const body = await parseBody();
-    const { slogan, show_ads, site_title, new_admin_password } = body;
-    if (slogan !== undefined) {
-      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("slogan", ?)').bind(String(slogan)).run();
-    }
-    if (show_ads !== undefined) {
-      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("show_ads", ?)').bind(show_ads ? 'true' : 'false').run();
-    }
-    if (site_title !== undefined) {
-      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("site_title", ?)').bind(String(site_title)).run();
-    }
-    if (new_admin_password !== undefined && String(new_admin_password).trim()) {
-      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("custom_admin_password", ?)').bind(String(new_admin_password).trim()).run();
-    }
-    return json({ success: true, message: '설정이 저장되었습니다.' });
-  }
-
-  if (pathname === '/api/admin/seed-test-data' && method === 'POST') {
-    return json({ success: true, message: '테스트 데이터 준비 완료' });
-  }
-
   // Admin Backup & Restore: GET /api/admin/backup, POST /api/admin/restore
   if (pathname === '/api/admin/backup' && method === 'GET') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -1042,4 +963,3 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   // Catch-all 404 with JSON (never empty!)
   return json({ error: `Not Found: ${pathname}` }, 404);
 };
-
