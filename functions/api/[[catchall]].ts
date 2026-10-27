@@ -564,12 +564,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-// 15. POST /api/admin/auth (마스터 비밀번호 원천 차단 및 개인 비밀번호 전용 인증)
+// 15. POST /api/admin/auth (마스터 비밀번호 영구 차단 & 개인 비밀번호 전용 인증)
   if (pathname === '/api/admin/auth' && method === 'POST') {
     const { passcode } = await parseBody();
     const cleanPass = (passcode || '').trim();
 
-    // 1. D1 DB에 저장된 커스텀 비밀번호 확인
     let dbPass: string | null = null;
     if (db) {
       try {
@@ -580,21 +579,16 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       } catch {}
     }
 
-    // 2. 환경변수 (wrangler.toml 또는 Pages 대시보드의 ADMIN_SECRET) 확인
     const envPass = env.ADMIN_SECRET?.trim() || null;
-
-    // 활성화된 개인 비밀번호 (D1 DB 우선, 환경변수 차순)
     const personalPassword = dbPass || envPass;
 
     if (personalPassword) {
-      // 개인 비밀번호가 설정된 순간, 마스터 비밀번호는 영구 차단되고 오직 개인 비밀번호만 허용됩니다!
       if (cleanPass === personalPassword) {
         return json({ success: true, token: cleanPass });
       }
       return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
     }
 
-    // fallback: 개인 비밀번호를 한 번도 설정하지 않은 초기 상태에만 작동
     if (cleanPass === 'vibedump-admin-2026') {
       return json({ success: true, token: cleanPass });
     }
@@ -602,11 +596,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
   }
 
-  // 16. Admin 통계 & 목록 엔드포인트
+  // 16. Admin 통계 및 목록
   if (pathname === '/api/admin/stats' && method === 'GET') {
-    if (!db) {
-      return json({ stats: { total_services: 0, pending_services: 0, total_views: 0, total_likes: 0, total_reviews: 0, total_reports: 0 } });
-    }
+    if (!db) return json({ stats: { total_services: 0, pending_services: 0, total_views: 0, total_likes: 0, total_reviews: 0, total_reports: 0 } });
     try {
       const sCount = await db.prepare('SELECT COUNT(*) as c FROM services').first();
       const vCount = await db.prepare('SELECT SUM(views_count) as c, SUM(likes_count) as l FROM services').first();
@@ -684,14 +676,19 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   if (pathname === '/api/admin/promotions' && method === 'GET') {
     if (!db) return json({ promotions: [] });
     try {
-      const res = await db.prepare('SELECT * FROM promotions ORDER BY id DESC').all();
+      const res = await db.prepare(`
+        SELECT p.*, s.name as service_name, s.url as service_url, s.thumbnail_url 
+        FROM promotions p 
+        LEFT JOIN services s ON p.service_id = s.id 
+        ORDER BY p.id DESC
+      `).all();
       return json({ promotions: res.results || [] });
     } catch {
       return json({ promotions: [] });
     }
   }
 
-  // 서비스 승인/숨김 상태 변경: PATCH /api/admin/services/:id/status
+  // 서비스 승인/숨김: PATCH /api/admin/services/:id/status
   const adminServiceStatusMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/status$/);
   if (adminServiceStatusMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -701,7 +698,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '상태가 변경되었습니다.' });
   }
 
-  // 서비스 카테고리 변경: PATCH /api/admin/services/:id/category
+  // 서비스 분야 변경: PATCH /api/admin/services/:id/category
   const adminServiceCategoryMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/category$/);
   if (adminServiceCategoryMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -711,7 +708,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '카테고리가 변경되었습니다.' });
   }
 
-  // 서비스 내용 수정: PUT /api/admin/services/:id
+  // 서비스 수정: PUT /api/admin/services/:id
   const adminServiceEditMatch = pathname.match(/^\/api\/admin\/services\/(\d+)$/);
   if (adminServiceEditMatch && method === 'PUT') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -805,7 +802,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 카테고리 이름수정 / 삭제: PATCH, DELETE /api/admin/categories/:name
+  // 카테고리 수정 / 삭제: PATCH, DELETE
   const adminCatNameMatch = pathname.match(/^\/api\/admin\/categories\/([^/]+)$/);
   if (adminCatNameMatch) {
     const rawName = decodeURIComponent(adminCatNameMatch[1]);
@@ -837,7 +834,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 신고 처리: PATCH /api/admin/reports/:id
+  // 신고, 리뷰, 태그 처리
   const adminReportMatch = pathname.match(/^\/api\/admin\/reports\/(\d+)$/);
   if (adminReportMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -847,7 +844,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '신고가 처리되었습니다.' });
   }
 
-  // 리뷰 상태 변경: PATCH /api/admin/reviews/:id/status
   const adminReviewStatusMatch = pathname.match(/^\/api\/admin\/reviews\/(\d+)\/status$/);
   if (adminReviewStatusMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -857,7 +853,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '리뷰 상태가 변경되었습니다.' });
   }
 
-  // 태그 상태 변경 및 삭제, 병합
   const adminTagStatusMatch = pathname.match(/^\/api\/admin\/tags\/(\d+)\/status$/);
   if (adminTagStatusMatch && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
@@ -906,60 +901,34 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '큐레이션이 삭제되었습니다.' });
   }
 
-  // 유료 광고 (프로모션) CRUD 및 노출
-
-  // 1) 관리자 프로모션 목록 조회
-  if (pathname === '/api/admin/promotions' && method === 'GET') {
-    if (!db) return json({ promotions: [] });
-    try {
-      const res = await db.prepare(`
-        SELECT p.*, s.name as service_name, s.url as service_url, s.thumbnail_url 
-        FROM promotions p 
-        LEFT JOIN services s ON p.service_id = s.id 
-        ORDER BY p.id DESC
-      `).all();
-      return json({ promotions: res.results || [] });
-    } catch {
-      return json({ promotions: [] });
-    }
-  }
-
-  // 2) 유료 광고 등록 (4개 슬롯: feed_sponsor, hero_sponsor, banner_sponsor, badge_sponsor)
-  if (pathname === '/api/admin/promotions' && method === 'POST') {
+  // ★ 스폰서 일괄 최종 저장 (임시 편집 후 한 번에 영구 저장)
+  if (pathname === '/api/admin/promotions/batch-save' && method === 'POST') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
-    const { service_id, slot_type, start_date, end_date } = await parseBody();
-    const now = new Date().toISOString();
-    await db.prepare(`
-      INSERT INTO promotions (service_id, slot_type, status, impressions, clicks, start_date, end_date, created_at)
-      VALUES (?, ?, 'active', 0, 0, ?, ?, ?)
-    `).bind(service_id, slot_type || 'feed_sponsor', start_date || now, end_date || now, now).run();
-    return json({ success: true, message: '유료 광고가 등록되었습니다.' });
-  }
-
-  // 3) 유료 광고 상태 변경 / 슬롯 수정
-  const adminPromoMatch = pathname.match(/^\/api\/admin\/promotions\/(\d+)$/);
-  if (adminPromoMatch && method === 'PATCH') {
-    if (!db) return json({ error: 'DB 연결 필요' }, 503);
-    const id = parseInt(adminPromoMatch[1], 10);
-    const { status, slot_type } = await parseBody();
-    if (slot_type) {
-      await db.prepare('UPDATE promotions SET slot_type = ? WHERE id = ?').bind(slot_type, id).run();
+    const { promotions: promoList } = await parseBody();
+    if (Array.isArray(promoList)) {
+      await db.prepare('DELETE FROM promotions').run();
+      const now = new Date().toISOString();
+      for (const p of promoList) {
+        await db.prepare(`
+          INSERT INTO promotions (id, service_id, slot_type, status, impressions, clicks, start_date, end_date, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          p.id || null,
+          Number(p.service_id),
+          p.slot_type || 'feed_sponsor',
+          p.status || 'active',
+          p.impressions || 0,
+          p.clicks || 0,
+          p.start_date || now,
+          p.end_date || now,
+          p.created_at || now
+        ).run();
+      }
     }
-    if (status) {
-      await db.prepare('UPDATE promotions SET status = ? WHERE id = ?').bind(status, id).run();
-    }
-    return json({ success: true, message: '프로모션이 수정되었습니다.' });
+    return json({ success: true, message: '스폰서 설정이 최종 저장되었습니다.' });
   }
 
-  // 4) 유료 광고 삭제 (DELETE)
-  if (adminPromoMatch && method === 'DELETE') {
-    if (!db) return json({ error: 'DB 연결 필요' }, 503);
-    const id = parseInt(adminPromoMatch[1], 10);
-    await db.prepare('DELETE FROM promotions WHERE id = ?').bind(id).run();
-    return json({ success: true, message: '프로모션이 삭제되었습니다.' });
-  }
-
-  // 5) 사용자 화면 노출용 공개 광고 조회
+  // ★ 공개 활성 광고 조회 (GET /api/promotions)
   if (pathname === '/api/promotions' && method === 'GET') {
     if (!db) return json({ promotions: [] });
     try {
@@ -976,9 +945,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // ==========================================
-  // 사이트 설정 (유료모드 토글, 슬로건, 관리자 비밀번호)
-  // ==========================================
+  // 관리자 설정 변경
   if (pathname === '/api/admin/settings' && method === 'PATCH') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const body = await parseBody();
@@ -1002,9 +969,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '테스트 데이터 준비 완료' });
   }
 
-  // ==========================================
   // 백업 및 복원
-  // ==========================================
   if (pathname === '/api/admin/backup' && method === 'GET') {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const svcs = await db.prepare('SELECT * FROM services').all();
