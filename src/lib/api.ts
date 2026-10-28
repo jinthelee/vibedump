@@ -602,3 +602,28 @@ export async function adminDeleteTag(tagId: number, token: string): Promise<any>
   });
   return await handleResponse(res, '태그 삭제 실패');
 }
+export async function adminDeletePromotion(id: number, token: string) {
+  const res = await fetch(`${BASE_URL}/admin/promotions/${id}`, {
+    method: 'DELETE',
+    headers: { 'x-admin-token': token },
+  });
+  return await handleResponse(res, '스폰서 삭제 실패');
+}
+
+export async function adminReorderPromotions(ids: number[], token: string) {
+  const res = await fetch(`${BASE_URL}/admin/promotions/reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({ ids }),
+  });
+  return await handleResponse(res, '스폰서 순서 변경 실패');
+}
+
+export async function adminSaveAllPromotions(promotions: Promotion[], token: string) {
+  const res = await fetch(`${BASE_URL}/admin/promotions/batch-save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({ promotions }),
+  });
+  return await handleResponse(res, '스폰서 일괄 저장 실패');
+}
