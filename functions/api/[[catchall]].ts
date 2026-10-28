@@ -162,28 +162,120 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-// 3. GET /api/tags
+  // 3. GET /api/tags
   if (pathname === '/api/tags' && method === 'GET') {
-    if (!db) return json({ tags: [] });
+    const defaultTagList = [
+      '웹앱', '웹게임', '글쓰기', '기록', '대시보드', '디자인', '템플릿',
+      '메모', '분석', '생산성', 'AI챗', '시각화', '자동화', '협업'
+    ];
+    if (!db) {
+      return json({
+        tags: defaultTagList.map((name, idx) => ({
+          id: idx + 1,
+          name,
+          normalized_name: normalizeTagName(name),
+          status: 'approved',
+          service_count: 0,
+          count: 0
+        }))
+      });
+    }
     try {
+      // Auto-seed default tags if tags table is empty
+      const tagCountRow = await db.prepare('SELECT COUNT(*) as count FROM tags').first().catch(() => null);
+      if (!tagCountRow || Number(tagCountRow.count) === 0) {
+        const now = new Date().toISOString();
+        for (const t of defaultTagList) {
+          await db.prepare('INSERT OR IGNORE INTO tags (name, normalized_name, status, created_at) VALUES (?, ?, "approved", ?)').bind(t, normalizeTagName(t), now).run().catch(() => {});
+        }
+      }
+
       const res = await db.prepare(`
         SELECT 
           t.id, 
           t.name, 
           t.normalized_name, 
           t.status, 
-          COUNT(DISTINCT st.service_id) as service_count,
-          COUNT(DISTINCT st.service_id) as count
+          COUNT(DISTINCT s.id) as service_count,
+          COUNT(DISTINCT s.id) as count
         FROM tags t
         LEFT JOIN service_tags st ON t.id = st.tag_id
         LEFT JOIN services s ON st.service_id = s.id AND s.status = 'approved'
         WHERE t.status = 'approved'
         GROUP BY t.id
-        ORDER BY service_count DESC
+        ORDER BY service_count DESC, t.name ASC
       `).all();
-      return json({ tags: res.results || [] });
+
+      const results = res.results || [];
+      if (results.length === 0) {
+        return json({
+          tags: defaultTagList.map((name, idx) => ({
+            id: idx + 1,
+            name,
+            normalized_name: normalizeTagName(name),
+            status: 'approved',
+            service_count: 0,
+            count: 0
+          }))
+        });
+      }
+      return json({ tags: results });
     } catch {
-      return json({ tags: [] });
+      return json({
+        tags: defaultTagList.map((name, idx) => ({
+          id: idx + 1,
+          name,
+          normalized_name: normalizeTagName(name),
+          status: 'approved',
+          service_count: 0,
+          count: 0
+        }))
+      });
+    }
+  }
+
+  // 3-1. POST /api/tags/suggest
+  if (pathname === '/api/tags/suggest' && method === 'POST') {
+    const { name } = await parseBody();
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return json({ error: '태그 이름을 입력해주세요.' }, 400);
+    }
+    const cleanName = name.trim();
+    const normalized = normalizeTagName(cleanName);
+
+    if (!db) {
+      return json({
+        match_type: 'created',
+        tag: { id: Date.now(), name: cleanName },
+        message: '새 태그 제안이 접수되었습니다.'
+      });
+    }
+
+    try {
+      const exact = await db.prepare('SELECT id, name, status FROM tags WHERE normalized_name = ?').bind(normalized).first();
+      if (exact) {
+        return json({
+          match_type: 'exact',
+          tag: exact,
+          message: '이미 등록된 태그가 있습니다.'
+        });
+      }
+
+      const now = new Date().toISOString();
+      const ins = await db.prepare('INSERT INTO tags (name, normalized_name, status, created_at) VALUES (?, ?, "approved", ?)').bind(cleanName, normalized, now).run();
+      const newId = ins.meta?.last_row_id || ins.lastRowId || Date.now();
+
+      return json({
+        match_type: 'created',
+        tag: { id: newId, name: cleanName },
+        message: '새 태그 제안이 접수되었습니다.'
+      });
+    } catch {
+      return json({
+        match_type: 'created',
+        tag: { id: Date.now(), name: cleanName },
+        message: '새 태그 제안이 접수되었습니다.'
+      });
     }
   }
 
@@ -206,7 +298,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-// 5. GET /api/services (목록 조회 - maker_email 제외됨)
+  // 5. GET /api/services
   if (pathname === '/api/services' && method === 'GET') {
     if (!db) return json({ services: [], count: 0 });
     try {
@@ -275,7 +367,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 6. GET /api/services/:id (상세 조회 - maker_email 제외됨)
+  // 6. GET /api/services/:id
   const serviceDetailMatch = pathname.match(/^\/api\/services\/(\d+)$/);
   if (serviceDetailMatch && method === 'GET') {
     const id = parseInt(serviceDetailMatch[1], 10);
@@ -354,7 +446,13 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         makerHash, now, now
       ).run();
 
-      const serviceId = insertSvc.meta?.last_row_id || insertSvc.lastRowId;
+      let serviceId = insertSvc.meta?.last_row_id || (insertSvc as any).lastRowId;
+      if (!serviceId) {
+        const lastRow = await db.prepare('SELECT last_insert_rowid() as id').first().catch(() => null);
+        if (lastRow && (lastRow as any).id) {
+          serviceId = (lastRow as any).id;
+        }
+      }
 
       if (Array.isArray(tags) && serviceId) {
         for (const tagName of tags.slice(0, 5)) {
@@ -365,9 +463,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
             VALUES (?, ?, 'approved', ?)
           `).bind(t, normalizeTagName(t), now).run();
 
-          const tagRow = await db.prepare('SELECT id FROM tags WHERE name = ?').bind(t).first();
-          if (tagRow) {
-            await db.prepare('INSERT OR IGNORE INTO service_tags (service_id, tag_id) VALUES (?, ?)').bind(serviceId, tagRow.id).run();
+          const tagRow = await db.prepare('SELECT id FROM tags WHERE name = ? OR normalized_name = ?').bind(t, normalizeTagName(t)).first();
+          if (tagRow && (tagRow as any).id) {
+            await db.prepare('INSERT OR IGNORE INTO service_tags (service_id, tag_id) VALUES (?, ?)').bind(serviceId, (tagRow as any).id).run();
           }
         }
       }
@@ -564,10 +662,13 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (!client_token) return json({ favorites: [] });
     try {
       const res = await db.prepare(`
-        SELECT s.* FROM services s
+        SELECT s.id, s.name, s.url, s.short_desc, s.description, s.category,
+               s.thumbnail_url, s.screenshot_url, s.maker_name,
+               s.status, s.views_count, s.likes_count, s.created_at, s.updated_at
+        FROM services s
         JOIN favorites f ON s.id = f.service_id
         WHERE f.client_token = ? AND s.status = 'approved'
-        ORDER BY f.created_at DESC
+        ORDER BY s.name COLLATE NOCASE ASC
       `).bind(client_token).all();
       return json({ favorites: res.results || [] });
     } catch {
