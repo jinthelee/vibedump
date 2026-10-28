@@ -206,7 +206,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 5. GET /api/services
+// 5. GET /api/services (목록 조회 - maker_email 제외됨)
   if (pathname === '/api/services' && method === 'GET') {
     if (!db) return json({ services: [], count: 0 });
     try {
@@ -217,7 +217,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       let sql = `
         SELECT s.id, s.name, s.url, s.short_desc, s.description, s.category,
-               s.thumbnail_url, s.screenshot_url, s.maker_name, 
+               s.thumbnail_url, s.screenshot_url, s.maker_name,
                s.status, s.views_count, s.likes_count, s.created_at, s.updated_at
         FROM services s
         WHERE s.status = 'approved'
@@ -275,7 +275,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 6. GET /api/services/:id
+  // 6. GET /api/services/:id (상세 조회 - maker_email 제외됨)
   const serviceDetailMatch = pathname.match(/^\/api\/services\/(\d+)$/);
   if (serviceDetailMatch && method === 'GET') {
     const id = parseInt(serviceDetailMatch[1], 10);
@@ -284,7 +284,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     try {
       const svcRes = await db.prepare(`
         SELECT id, name, url, short_desc, description, category,
-               thumbnail_url, screenshot_url, maker_name, maker_email,
+               thumbnail_url, screenshot_url, maker_name,
                status, views_count, likes_count, created_at, updated_at
         FROM services WHERE id = ?
       `).bind(id).first();
