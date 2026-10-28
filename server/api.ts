@@ -767,7 +767,7 @@ apiRouter.post('/maker/verify', (req: Request, res: Response) => {
   }
 
   const service = db.prepare(`
-    SELECT id, name, url, short_desc, description, category, thumbnail_url, screenshot_url, maker_name, maker_email, views_count, likes_count, status
+    SELECT id, name, url, short_desc, description, category, thumbnail_url, screenshot_url, maker_name, views_count, likes_count, status
     FROM services WHERE id = ?
   `).get(Number(service_id)) as Record<string, any> | undefined;
 
