@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { MobileHeader } from './components/MobileHeader';
 import { Hero } from './components/Hero';
@@ -19,7 +19,7 @@ import {
   fetchFavorites, fetchSettings, fetchCommunity, fetchPromotions,
   DEFAULT_FALLBACK_TAGS
 } from './lib/api';
-import { Service, TagItem, Curation } from './types';
+import { Service, TagItem, Curation, Promotion } from './types';
 import { MessageSquare, Megaphone, Bookmark, Dices } from 'lucide-react';
 
 export default function App() {
@@ -27,6 +27,7 @@ export default function App() {
   const [categories, setCategories] = useState<{ name: string; count: number }[]>([]);
   const [tags, setTags] = useState<TagItem[]>([]);
   const [curations, setCurations] = useState<Curation[]>([]);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [favoritesList, setFavoritesList] = useState<Service[]>([]);
 
   // Community data (Requirement 5: only real manual maker posts & reviews)
@@ -74,40 +75,102 @@ export default function App() {
 
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load services with current filters
-  const loadServices = useCallback(async () => {
+  // Load services with current filters and pin sponsored services to top
+  const loadServices = useCallback(async (currentPromos?: Promotion[]) => {
     setIsLoading(true);
     try {
+      const activePromos = currentPromos || promotions;
       const res = await fetchServices({
         category: selectedCategory,
         tag: selectedTag || undefined,
         q: searchQuery,
         sort: sortOption,
       });
-      setServices(res.services);
+
+      // Active feed sponsors in priority order (ONLY slot_type === 'feed_sponsor')
+      const activeFeedSponsors = activePromos.filter(
+        (p) => p.status === 'active' && p.slot_type === 'feed_sponsor'
+      );
+      const sponsorOrderMap = new Map<number, number>();
+      activeFeedSponsors.forEach((p, index) => {
+        if (!sponsorOrderMap.has(Number(p.service_id))) {
+          sponsorOrderMap.set(Number(p.service_id), index);
+        }
+      });
+
+      const processed = res.services.map((s) => {
+        if (sponsorOrderMap.has(s.id)) {
+          return {
+            ...s,
+            is_sponsored: true,
+            sponsor_id: s.id,
+            sponsor_order: sponsorOrderMap.get(s.id),
+          };
+        }
+        return {
+          ...s,
+          is_sponsored: false,
+        };
+      });
+
+      // Pin sponsored cards to the top according to admin display order!
+      processed.sort((a, b) => {
+        const aSpon = Boolean(a.is_sponsored);
+        const bSpon = Boolean(b.is_sponsored);
+        if (aSpon && !bSpon) return -1;
+        if (!aSpon && bSpon) return 1;
+        if (aSpon && bSpon) {
+          return (a as any).sponsor_order - (b as any).sponsor_order;
+        }
+        return 0;
+      });
+
+      setServices(processed);
     } catch (err) {
       console.error('Failed to load services:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [selectedCategory, selectedTag, searchQuery, sortOption]);
+  }, [selectedCategory, selectedTag, searchQuery, sortOption, promotions]);
 
-  // Load metadata (categories, tags, curations, favorites, settings, community)
+  // Load metadata (categories, tags, curations, promotions, favorites, settings, community)
   const loadMetadata = useCallback(async () => {
     try {
-      const [catRes, tagRes, curRes, favRes, setRes, comRes] = await Promise.all([
+      const [catRes, tagRes, curRes, favRes, setRes, comRes, promoRes] = await Promise.all([
         fetchCategories(),
         fetchTags(tagSort),
         fetchCurations(),
         fetchFavorites(),
         fetchSettings().catch(() => ({ settings: { slogan: '인터넷은 아직 재밌다', show_ads: false, site_title: '바이브덤프 - 인터넷은 아직 재밌다' } })),
         fetchCommunity().catch(() => ({ maker_posts: [], reviews: [] })),
+        fetchPromotions().catch(() => ({ promotions: [] })),
       ]);
+
+      const loadedPromos = promoRes.promotions || [];
+      setPromotions(loadedPromos);
+
       setCategories(catRes.categories);
-      setTags(tagRes.tags);
-      setCurations(curRes.curations);
-      setFavoritesList(favRes.favorites);
-      setFavoritesIds(new Set(favRes.favorites.map((f) => f.id)));
+      const initialTags = (tagRes.tags && tagRes.tags.length > 0) ? tagRes.tags : DEFAULT_FALLBACK_TAGS;
+      setTags(initialTags);
+
+      // 큐레이션 스폰서 분리: 오직 slot_type === 'curation_sponsor'만 큐레이션에 '스폰서' 딱지 부착
+      const curationSponsorServiceIds = new Set(
+        loadedPromos
+          .filter((p) => p.status === 'active' && p.slot_type === 'curation_sponsor')
+          .map((p) => Number(p.service_id))
+      );
+      const enhancedCurations = (curRes.curations || []).map((c: any) => ({
+        ...c,
+        is_sponsored: curationSponsorServiceIds.has(Number(c.service_id || c.id)),
+      }));
+      setCurations(enhancedCurations);
+
+      // 최신 스폰서 설정으로 피드 카드 목록도 즉시 동기화
+      loadServices(loadedPromos);
+
+      const sortedFavs = (favRes.favorites || []).slice().sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+      setFavoritesList(sortedFavs);
+      setFavoritesIds(new Set(sortedFavs.map((f) => f.id)));
       if (setRes.settings?.slogan) {
         setSlogan(setRes.settings.slogan);
       }
@@ -134,17 +197,54 @@ export default function App() {
 
   // Real-time synchronization of tag counts with loaded services
   useEffect(() => {
-    if (services.length === 0) return;
+    if (!services || services.length === 0) return;
+
+    const liveTagMap = new Map<string, number>();
+    services.forEach((s) => {
+      if (Array.isArray(s.tags)) {
+        s.tags.forEach((raw) => {
+          const t = String(raw).trim();
+          if (t) liveTagMap.set(t, (liveTagMap.get(t) || 0) + 1);
+        });
+      }
+    });
+
     setTags((prevTags) => {
-      const baseTags = prevTags.length > 0 ? prevTags : DEFAULT_FALLBACK_TAGS;
-      return baseTags.map((tag) => {
-        const liveCount = services.filter((s) => Array.isArray(s.tags) && s.tags.includes(tag.name)).length;
-        const currentCount = Number(tag.service_count ?? (tag as any).count ?? 0);
+      const baseTags = (prevTags && prevTags.length > 0) ? [...prevTags] : [...DEFAULT_FALLBACK_TAGS];
+      const existingNames = new Set(baseTags.map((t) => t.name));
+
+      // 1. Update counts of existing tags
+      const updated = baseTags.map((t) => {
+        const live = liveTagMap.get(t.name) || 0;
+        const current = Number(t.service_count ?? (t as any).count ?? 0);
         return {
-          ...tag,
-          service_count: Math.max(currentCount, liveCount),
+          ...t,
+          service_count: Math.max(current, live),
         };
       });
+
+      // 2. Add any NEW tags from registered services
+      liveTagMap.forEach((count, name) => {
+        if (!existingNames.has(name)) {
+          updated.push({
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            name,
+            normalized_name: name.toLowerCase(),
+            service_count: count,
+            recent_growth: 1,
+            created_at: new Date().toISOString(),
+          });
+        }
+      });
+
+      // 3. Sort by service count descending (많은 순으로 정렬)
+      updated.sort((a, b) => {
+        const diff = (b.service_count ?? 0) - (a.service_count ?? 0);
+        if (diff !== 0) return diff;
+        return a.name.localeCompare(b.name, 'ko');
+      });
+
+      return updated;
     });
   }, [services]);
 
@@ -164,9 +264,16 @@ export default function App() {
       return next;
     });
     fetchFavorites()
-      .then((res) => setFavoritesList(res.favorites))
+      .then((res) => {
+        const sorted = (res.favorites || []).slice().sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+        setFavoritesList(sorted);
+      })
       .catch(() => {});
   };
+
+  const sortedFavorites: Service[] = useMemo(() => {
+    return [...favoritesList].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  }, [favoritesList]);
 
   const totalRegisteredCount = categories.reduce((sum, c) => sum + c.count, 0);
 
@@ -189,7 +296,7 @@ export default function App() {
         onSelectTab={setActiveTab}
         onOpenSubmit={() => setIsSubmitOpen(true)}
         onOpenManagement={() => setIsManagementOpen(true)}
-        favorites={favoritesList}
+        favorites={sortedFavorites}
         onSelectService={(s) => setDetailServiceId(s.id)}
         onOpenExternalNotice={(s) => setExternalNoticeService(s)}
         slogan={slogan}
@@ -226,6 +333,7 @@ export default function App() {
             <section>
               <TagExplorer
                 tags={tags}
+                services={services}
                 selectedTag={selectedTag}
                 onSelectTag={setSelectedTag}
                 onTagCreated={loadMetadata}
@@ -478,6 +586,7 @@ export default function App() {
 
             <TagExplorer
               tags={tags}
+              services={services}
               selectedTag={selectedTag}
               onSelectTag={(t) => {
                 setSelectedTag(t);
@@ -488,7 +597,7 @@ export default function App() {
               onTagSortChange={setTagSort}
             />
 
-        {/* Popular Tag Clouds */}
+            {/* Popular Tag Clouds */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-4 border-t-2 border-[#0A0A0A]">
               {(() => {
                 const baseList = (tags && tags.length > 0 ? tags : DEFAULT_FALLBACK_TAGS);
@@ -498,7 +607,7 @@ export default function App() {
                   return { ...t, service_count: countVal };
                 });
 
-                // 많은 순으로 맨 앞에 정렬!
+                // Sort by count descending so tags with services appear first!
                 tagListWithLiveCounts.sort((a, b) => b.service_count - a.service_count || a.name.localeCompare(b.name, 'ko'));
 
                 return tagListWithLiveCounts.map((t) => (
@@ -561,7 +670,7 @@ export default function App() {
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                {favoritesList.map((service) => (
+                {sortedFavorites.map((service: Service) => (
                   <ServiceCard
                     key={service.id}
                     service={service}
@@ -635,7 +744,14 @@ export default function App() {
       {policyTab && <PolicyModal initialTab={policyTab} onClose={() => setPolicyTab(null)} />}
 
       {/* 5. Floating Ad Banner (Only shown when showAds is enabled) */}
-      {showAds && <FloatingAdBanner />}
+      {showAds && (
+        <FloatingAdBanner
+          promotions={promotions}
+          services={services}
+          slogan={slogan}
+          onSelectService={(id) => setDetailServiceId(id)}
+        />
+      )}
     </div>
   );
 }
