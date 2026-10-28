@@ -228,3 +228,4 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
     </section>
   );
 };
+ 
