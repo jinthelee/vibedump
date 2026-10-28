@@ -162,18 +162,24 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // 3. GET /api/tags
+// 3. GET /api/tags
   if (pathname === '/api/tags' && method === 'GET') {
     if (!db) return json({ tags: [] });
     try {
       const res = await db.prepare(`
-        SELECT t.id, t.name, t.normalized_name, t.status, COUNT(st.service_id) as count
+        SELECT 
+          t.id, 
+          t.name, 
+          t.normalized_name, 
+          t.status, 
+          COUNT(DISTINCT st.service_id) as service_count,
+          COUNT(DISTINCT st.service_id) as count
         FROM tags t
         LEFT JOIN service_tags st ON t.id = st.tag_id
         LEFT JOIN services s ON st.service_id = s.id AND s.status = 'approved'
         WHERE t.status = 'approved'
         GROUP BY t.id
-        ORDER BY count DESC
+        ORDER BY service_count DESC
       `).all();
       return json({ tags: res.results || [] });
     } catch {
