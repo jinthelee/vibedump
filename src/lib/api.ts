@@ -4,7 +4,7 @@ const BASE_URL = '/api';
 
 export const DEFAULT_FALLBACK_CATEGORIES = [
   '생산성', '비즈니스', '창작', '게임', '체크리스트', '사주타로',
-  '밈', '덕질', '라이프', '학습', '소셜', '캐릭터소셜' 
+  '밈', '덕질', '라이프', '학습', '소셜', '캐릭터소셜'
 ];
 
 // Robust JSON response handler that prevents "Unexpected end of JSON input"
@@ -28,55 +28,36 @@ async function handleResponse<T = any>(res: Response, fallbackError: string): Pr
   }
 
   if (!res.ok) {
-    if (data?.error) throw new Error(data.error);
-    if (data?.message) throw new Error(data.message);
-    if (res.status === 404) {
-      throw new Error('API 서버를 찾을 수 없습니다. (Cloudflare D1 / Functions 연결 확인 필요)');
-    }
-    throw new Error(`${fallbackError} (${res.status})`);
+    const errorMsg = data?.error || data?.message || trimmed.slice(0, 100) || fallbackError;
+    throw new Error(errorMsg);
   }
 
-  if (data !== null) {
-    return data as T;
-  }
-  return {} as T;
+  return (data !== null ? data : {}) as T;
 }
 
-// Generate or retrieve persistent anonymous client token for reactions/favorites
 export function getClientToken(): string {
-  if (typeof window === 'undefined') return 'ssr_token';
-  const KEY = 'vibedump_client_token';
-  let token = localStorage.getItem(KEY);
+  let token = localStorage.getItem('vibedump_client_token');
   if (!token) {
-    token = 'cli_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-    localStorage.setItem(KEY, token);
+    token = 'client_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+    localStorage.setItem('vibedump_client_token', token);
   }
   return token;
 }
 
-export async function fetchServices(params: {
+export async function fetchServices(params?: {
   category?: string;
   tag?: string;
   q?: string;
-  sort?: string;
-  limit?: number;
-  offset?: number;
+  sort?: 'latest' | 'popular' | 'views' | 'reviews';
 }): Promise<{ services: Service[]; count: number }> {
-  try {
-    const query = new URLSearchParams();
-    if (params.category && params.category !== 'all') query.set('category', params.category);
-    if (params.tag) query.set('tag', params.tag);
-    if (params.q) query.set('q', params.q);
-    if (params.sort) query.set('sort', params.sort);
-    if (params.limit) query.set('limit', String(params.limit));
-    if (params.offset) query.set('offset', String(params.offset));
+  const query = new URLSearchParams();
+  if (params?.category && params.category !== 'all') query.set('category', params.category);
+  if (params?.tag) query.set('tag', params.tag);
+  if (params?.q) query.set('q', params.q);
+  if (params?.sort) query.set('sort', params.sort);
 
-    const res = await fetch(`${BASE_URL}/services?${query.toString()}`);
-    return await handleResponse<{ services: Service[]; count: number }>(res, '서비스 목록을 불러오지 못했습니다.');
-  } catch (err: any) {
-    console.warn('fetchServices warning:', err?.message || err);
-    return { services: [], count: 0 };
-  }
+  const res = await fetch(`${BASE_URL}/services?${query.toString()}`);
+  return await handleResponse(res, '서비스 목록을 불러오지 못했습니다.');
 }
 
 export async function fetchServiceDetail(id: number): Promise<{
@@ -140,21 +121,11 @@ export const DEFAULT_FALLBACK_TAGS: TagItem[] = [
   created_at: new Date().toISOString()
 }));
 
-export async function fetchTags(sort: 'count' | 'trending' | 'name' = 'count'): Promise<{ tags: TagItem[] }> {
+export async function fetchTags(sort?: 'count' | 'trending' | 'name'): Promise<{ tags: TagItem[] }> {
   try {
-    const res = await fetch(`${BASE_URL}/tags?sort=${sort}`);
-    const data = await handleResponse<{ tags: any[] }>(res, '태그 목록을 불러오지 못했습니다.');
-    const rawList = Array.isArray(data.tags) && data.tags.length > 0 ? data.tags : DEFAULT_FALLBACK_TAGS;
-    const tags = rawList.map((t: any, idx: number) => ({
-      ...t,
-      id: t.id || idx + 1,
-      name: t.name,
-      normalized_name: t.normalized_name || t.name.toLowerCase(),
-      service_count: Number(t.service_count !== undefined ? t.service_count : (t.count ?? 0)),
-      recent_growth: Number(t.recent_growth ?? 0),
-      created_at: t.created_at || new Date().toISOString()
-    }));
-    return { tags };
+    const query = sort ? `?sort=${sort}` : '';
+    const res = await fetch(`${BASE_URL}/tags${query}`);
+    return await handleResponse(res, '태그를 불러오지 못했습니다.');
   } catch {
     return { tags: DEFAULT_FALLBACK_TAGS };
   }
@@ -162,8 +133,7 @@ export async function fetchTags(sort: 'count' | 'trending' | 'name' = 'count'): 
 
 export async function suggestTag(name: string): Promise<{
   match_type: 'exact' | 'created';
-  tag: { id: number; name: string };
-  similar_tags?: Array<{ id: number; name: string }>;
+  tag: TagItem;
   message: string;
 }> {
   const res = await fetch(`${BASE_URL}/tags/suggest`, {
@@ -174,29 +144,92 @@ export async function suggestTag(name: string): Promise<{
   return await handleResponse(res, '태그 제안에 실패했습니다.');
 }
 
-export async function fetchCurations(): Promise<{ curations: Curation[] }> {
-  try {
-    const res = await fetch(`${BASE_URL}/curations`);
-    return await handleResponse(res, '큐레이션을 불러오지 못했습니다.');
-  } catch {
-    return { curations: [] };
+export async function verifyMaker(
+  serviceId: number,
+  makerCode: string
+): Promise<{ success: boolean; service: Service }> {
+  const res = await fetch(`${BASE_URL}/maker/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ service_id: serviceId, maker_code: makerCode }),
+  });
+  return await handleResponse(res, '제작자 인증에 실패했습니다.');
+}
+
+export async function updateMakerService(
+  serviceId: number,
+  payload: {
+    maker_code: string;
+    name: string;
+    url: string;
+    short_desc: string;
+    description: string;
+    category: string;
+    tags: string[];
+    thumbnail_url?: string;
+    screenshot_url?: string;
+    maker_name?: string;
+    maker_email?: string;
   }
+): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${BASE_URL}/maker/services/${serviceId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return await handleResponse(res, '서비스 수정에 실패했습니다.');
+}
+
+export async function deleteMakerService(
+  serviceId: number,
+  makerCode: string
+): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${BASE_URL}/maker/services/${serviceId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ maker_code: makerCode }),
+  });
+  return await handleResponse(res, '서비스 삭제에 실패했습니다.');
+}
+
+export async function createMakerPost(
+  serviceId: number,
+  payload: { maker_code: string; title: string; content: string; post_type: 'notice' | 'update' | 'event' }
+): Promise<{ success: boolean; post_id: number; message: string }> {
+  const res = await fetch(`${BASE_URL}/maker/services/${serviceId}/posts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return await handleResponse(res, '제작자 공지 등록에 실패했습니다.');
+}
+
+export async function deleteMakerPost(
+  postId: number,
+  makerCode: string
+): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${BASE_URL}/maker/posts/${postId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ maker_code: makerCode }),
+  });
+  return await handleResponse(res, '제작자 공지 삭제에 실패했습니다.');
 }
 
 export async function toggleReaction(
   serviceId: number,
-  type: 'like' | 'fire' | 'heart' | 'rocket' | 'mind_blown'
-): Promise<{ success: boolean; toggled_off: boolean; likes_count: number; reactions: Record<string, number> }> {
+  type: string
+): Promise<{ success: boolean; likes_count: number; toggled_off: boolean }> {
   const client_token = getClientToken();
   const res = await fetch(`${BASE_URL}/services/${serviceId}/reactions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, client_token }),
   });
-  return await handleResponse(res, '반응 처리에 실패했습니다.');
+  return await handleResponse(res, '반응 남기기에 실패했습니다.');
 }
 
-export async function submitReview(
+export async function createReview(
   serviceId: number,
   payload: { rating: number; content: string; author_name?: string }
 ): Promise<{ success: boolean; review: Review }> {
@@ -250,93 +283,44 @@ export async function trackPromoClick(promoId: number): Promise<void> {
   }
 }
 
-// ---------------- Maker Studio API ----------------
-export async function verifyMaker(
-  serviceId: number,
-  makerCode: string
-): Promise<{ success: boolean; service: Service }> {
-  const res = await fetch(`${BASE_URL}/maker/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ service_id: serviceId, maker_code: makerCode }),
-  });
-  return await handleResponse(res, '제작자 코드 인증에 실패했습니다.');
+export async function fetchCurations(): Promise<{ curations: Curation[] }> {
+  try {
+    const res = await fetch(`${BASE_URL}/curations`);
+    return await handleResponse(res, '큐레이션을 불러오지 못했습니다.');
+  } catch {
+    return { curations: [] };
+  }
 }
 
-export async function updateMakerService(
-  serviceId: number,
-  makerCode: string,
-  payload: Partial<Service>
-): Promise<{ success: boolean; message: string }> {
-  const res = await fetch(`${BASE_URL}/maker/services/${serviceId}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, maker_code: makerCode }),
-  });
-  return await handleResponse(res, '서비스 정보 수정에 실패했습니다.');
-}
-
-export async function createMakerPost(
-  serviceId: number,
-  makerCode: string,
-  payload: { title: string; content: string; post_type?: string }
-): Promise<{ success: boolean; post_id: number; message: string }> {
-  const res = await fetch(`${BASE_URL}/maker/services/${serviceId}/posts`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, maker_code: makerCode }),
-  });
-  return await handleResponse(res, '공지 등록에 실패했습니다.');
-}
-
-export async function deleteMakerPost(
-  postId: number,
-  makerCode: string
-): Promise<{ success: boolean; message: string }> {
-  const res = await fetch(`${BASE_URL}/maker/posts/${postId}`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maker_code: makerCode }),
-  });
-  return await handleResponse(res, '글 삭제에 실패했습니다.');
-}
-
-export async function deleteMakerService(
-  serviceId: number,
-  makerCode: string
-): Promise<{ success: boolean; message: string }> {
-  const res = await fetch(`${BASE_URL}/maker/services/${serviceId}`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maker_code: makerCode }),
-  });
-  return await handleResponse(res, '사이트 삭제에 실패했습니다.');
-}
-
-export async function fetchCommunity(): Promise<{ maker_posts: any[]; reviews: any[] }> {
+export async function fetchCommunity(): Promise<{
+  maker_posts: Array<MakerPost & { service_name: string; category: string }>;
+  reviews: Array<Review & { service_name: string; category: string }>;
+}> {
   try {
     const res = await fetch(`${BASE_URL}/community`);
-    return await handleResponse(res, '커뮤니티 데이터를 불러오지 못했습니다.');
+    return await handleResponse(res, '커뮤니티 소식을 불러오지 못했습니다.');
   } catch {
     return { maker_posts: [], reviews: [] };
   }
 }
 
-// ---------------- Admin API ----------------
-export async function adminAuth(passcode: string): Promise<{ success: boolean; token: string }> {
+export async function adminAuth(password: string): Promise<{ success: boolean; token: string }> {
   const res = await fetch(`${BASE_URL}/admin/auth`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ passcode }),
+    body: JSON.stringify({ password }),
   });
-  return await handleResponse(res, '관리자 인증 실패');
+  return await handleResponse(res, '관리자 인증에 실패했습니다.');
 }
 
-export async function adminGetServices(token: string): Promise<{ services: Service[] }> {
-  const res = await fetch(`${BASE_URL}/admin/services`, {
+export async function adminGetServices(
+  status: string = 'all',
+  token: string
+): Promise<{ services: Service[] }> {
+  const res = await fetch(`${BASE_URL}/admin/services?status=${status}`, {
     headers: { 'x-admin-token': token },
   });
-  return await handleResponse(res, '관리자 서비스 목록 조회 실패');
+  return await handleResponse(res, '서비스 관리 목록을 불러오지 못했습니다.');
 }
 
 export async function adminUpdateServiceStatus(id: number, status: string, token: string) {
@@ -459,30 +443,34 @@ export async function adminGetReviews(token: string): Promise<{ reviews: Review[
   const res = await fetch(`${BASE_URL}/admin/reviews`, {
     headers: { 'x-admin-token': token },
   });
-  return await handleResponse(res, '리뷰 목록 조회 실패');
+  return await handleResponse(res, '후기 내역 조회 실패');
 }
 
 export async function adminUpdateReviewStatus(id: number, status: string, token: string) {
-  const res = await fetch(`${BASE_URL}/admin/reviews/${id}/status`, {
+  const res = await fetch(`${BASE_URL}/admin/reviews/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
     body: JSON.stringify({ status }),
   });
-  return await handleResponse(res, '리뷰 상태 변경 실패');
+  return await handleResponse(res, '후기 상태 변경 실패');
 }
 
 export async function adminGetTags(token: string): Promise<{ tags: TagItem[] }> {
   const res = await fetch(`${BASE_URL}/admin/tags`, {
     headers: { 'x-admin-token': token },
   });
-  return await handleResponse(res, '태그 관리 목록 조회 실패');
+  return await handleResponse(res, '태그 목록 조회 실패');
 }
 
-export async function adminMergeTags(sourceTagId: number, targetTagId: number, token: string) {
+export async function adminMergeTags(
+  targetTag: string,
+  sourceTags: string[],
+  token: string
+): Promise<{ success: boolean; message: string }> {
   const res = await fetch(`${BASE_URL}/admin/tags/merge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
-    body: JSON.stringify({ source_tag_id: sourceTagId, target_tag_id: targetTagId }),
+    body: JSON.stringify({ target_tag: targetTag, source_tags: sourceTags }),
   });
   return await handleResponse(res, '태그 병합 실패');
 }
@@ -495,7 +483,7 @@ export async function adminGetCurations(token: string): Promise<{ curations: Cur
 }
 
 export async function adminCreateCuration(
-  payload: { service_id: number; badge_text: string; editorial_blurb: string; display_order?: number },
+  payload: { service_id: number; badge_text?: string; editorial_blurb?: string; display_order?: number },
   token: string
 ) {
   const res = await fetch(`${BASE_URL}/admin/curations`, {
@@ -540,6 +528,41 @@ export async function adminTogglePromotion(id: number, status: string, token: st
     body: JSON.stringify({ status }),
   });
   return await handleResponse(res, '스폰서 상태 수정 실패');
+}
+
+export async function adminDeletePromotion(id: number, token: string) {
+  const res = await fetch(`${BASE_URL}/admin/promotions/${id}`, {
+    method: 'DELETE',
+    headers: { 'x-admin-token': token },
+  });
+  return await handleResponse(res, '스폰서 삭제 실패');
+}
+
+export async function adminReorderPromotions(ids: number[], token: string) {
+  const res = await fetch(`${BASE_URL}/admin/promotions/reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({ ids }),
+  });
+  return await handleResponse(res, '스폰서 순서 변경 실패');
+}
+
+export async function adminSaveAllPromotions(promotions: Promotion[], token: string) {
+  const res = await fetch(`${BASE_URL}/admin/promotions/batch-save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({ promotions }),
+  });
+  return await handleResponse(res, '스폰서 일괄 저장 실패');
+}
+
+export async function fetchPromotions(): Promise<{ promotions: Promotion[] }> {
+  try {
+    const res = await fetch(`${BASE_URL}/promotions`);
+    return await handleResponse(res, '광고 목록 조회 실패');
+  } catch {
+    return { promotions: [] };
+  }
 }
 
 export async function adminGetStats(token: string): Promise<{ stats: AdminStats }> {
@@ -601,29 +624,4 @@ export async function adminDeleteTag(tagId: number, token: string): Promise<any>
     headers: { 'x-admin-token': token },
   });
   return await handleResponse(res, '태그 삭제 실패');
-}
-export async function adminDeletePromotion(id: number, token: string) {
-  const res = await fetch(`${BASE_URL}/admin/promotions/${id}`, {
-    method: 'DELETE',
-    headers: { 'x-admin-token': token },
-  });
-  return await handleResponse(res, '스폰서 삭제 실패');
-}
-
-export async function adminReorderPromotions(ids: number[], token: string) {
-  const res = await fetch(`${BASE_URL}/admin/promotions/reorder`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
-    body: JSON.stringify({ ids }),
-  });
-  return await handleResponse(res, '스폰서 순서 변경 실패');
-}
-
-export async function adminSaveAllPromotions(promotions: Promotion[], token: string) {
-  const res = await fetch(`${BASE_URL}/admin/promotions/batch-save`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
-    body: JSON.stringify({ promotions }),
-  });
-  return await handleResponse(res, '스폰서 일괄 저장 실패');
 }
