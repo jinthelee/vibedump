@@ -625,3 +625,4 @@ export async function adminDeleteTag(tagId: number, token: string): Promise<any>
   });
   return await handleResponse(res, '태그 삭제 실패');
 }
+export const submitReview = createReview;
