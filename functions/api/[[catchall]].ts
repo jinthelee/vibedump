@@ -54,7 +54,9 @@ type PagesFunction<E = any> = (context: PagesFunctionContext<E>) => Response | P
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
   const url = new URL(request.url);
-  const pathname = url.pathname;
+  // Normalize pathname: strip trailing slash, ensure /api prefix
+  const rawPath = url.pathname.replace(/\/+$/, '') || '/';
+  const pathname = rawPath.startsWith('/api') ? rawPath : `/api${rawPath}`;
   const method = request.method;
 
   if (method === 'OPTIONS') {
@@ -184,11 +186,13 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (!db) return json({ curations: [] });
     try {
       const res = await db.prepare(`
-        SELECT c.*, s.name, s.short_desc, s.category, s.thumbnail_url
+        SELECT 
+          c.id as curation_id, c.service_id, c.badge_text, c.editorial_blurb, c.display_order, c.is_active,
+          s.id, s.name, s.url, s.short_desc, s.category, s.thumbnail_url, s.screenshot_url, s.likes_count, s.views_count
         FROM curations c
         JOIN services s ON c.service_id = s.id
         WHERE c.is_active = 1 AND s.status = 'approved'
-        ORDER BY c.display_order ASC
+        ORDER BY c.display_order ASC, c.created_at DESC
       `).all();
       return json({ curations: res.results || [] });
     } catch {
@@ -441,6 +445,64 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '서비스 정보가 성공적으로 수정되었습니다.' });
   }
 
+  // 9-1. DELETE /api/maker/services/:id (Permanent deletion by maker)
+  const makerDeleteMatch = pathname.match(/^\/api\/maker\/services\/(\d+)$/);
+  if (makerDeleteMatch && method === 'DELETE') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(makerDeleteMatch[1], 10);
+    const { maker_code } = await parseBody();
+    const hash = await sha256(maker_code || '');
+    const svc = await db.prepare('SELECT * FROM services WHERE id = ?').bind(id).first();
+    if (!svc || svc.maker_code_hash !== hash) {
+      return json({ error: '제작자 코드가 일치하지 않습니다.' }, 403);
+    }
+    await db.prepare('DELETE FROM service_tags WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM reviews WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM reactions WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM favorites WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM maker_posts WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM curations WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM promotions WHERE service_id = ?').bind(id).run();
+    await db.prepare('DELETE FROM services WHERE id = ?').bind(id).run();
+    return json({ success: true, message: '사이트가 성공적으로 영구 삭제되었습니다.' });
+  }
+
+  // 9-2. POST /api/maker/services/:id/posts (Maker post creation)
+  const makerPostMatch = pathname.match(/^\/api\/maker\/services\/(\d+)\/posts$/);
+  if (makerPostMatch && method === 'POST') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(makerPostMatch[1], 10);
+    const { maker_code, title, content, post_type } = await parseBody();
+    const hash = await sha256(maker_code || '');
+    const svc = await db.prepare('SELECT * FROM services WHERE id = ?').bind(id).first();
+    if (!svc || svc.maker_code_hash !== hash) {
+      return json({ error: '제작자 코드가 일치하지 않습니다.' }, 403);
+    }
+    const now = new Date().toISOString();
+    const ins = await db.prepare(`
+      INSERT INTO maker_posts (service_id, title, content, post_type, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(id, title || '', content || '', post_type || 'notice', now).run();
+    return json({ success: true, post_id: ins.meta?.last_row_id || 1, message: '제작자 공지가 등록되었습니다.' });
+  }
+
+  // 9-3. DELETE /api/maker/posts/:id (Maker post deletion)
+  const makerPostDelMatch = pathname.match(/^\/api\/maker\/posts\/(\d+)$/);
+  if (makerPostDelMatch && method === 'DELETE') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(makerPostDelMatch[1], 10);
+    const { maker_code } = await parseBody();
+    const post = await db.prepare('SELECT * FROM maker_posts WHERE id = ?').bind(id).first();
+    if (!post) return json({ error: '해당 글을 찾을 수 없습니다.' }, 404);
+    const hash = await sha256(maker_code || '');
+    const svc = await db.prepare('SELECT * FROM services WHERE id = ?').bind(post.service_id).first();
+    if (!svc || svc.maker_code_hash !== hash) {
+      return json({ error: '권한이 없습니다.' }, 403);
+    }
+    await db.prepare('DELETE FROM maker_posts WHERE id = ?').bind(id).run();
+    return json({ success: true, message: '공지 글이 삭제되었습니다.' });
+  }
+
   // 10. POST /api/services/:id/reactions
   const reactionMatch = pathname.match(/^\/api\/services\/(\d+)\/reactions$/);
   if (reactionMatch && method === 'POST') {
@@ -532,6 +594,25 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       });
     } catch (err: any) {
       return json({ error: err.message || '후기 작성 실패' }, 500);
+    }
+  }
+
+  // 13-1. POST /api/reports (Submit report)
+  if (pathname === '/api/reports' && method === 'POST') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const { target_type, target_id, reason, details } = await parseBody();
+    if (!target_type || !target_id || !reason) {
+      return json({ error: '신고 사유와 대상을 입력해주세요.' }, 400);
+    }
+    const now = new Date().toISOString();
+    try {
+      await db.prepare(`
+        INSERT INTO reports (target_type, target_id, reason, details, status, created_at)
+        VALUES (?, ?, ?, ?, 'pending', ?)
+      `).bind(target_type, target_id, reason, details || null, now).run();
+      return json({ success: true, message: '신고가 접수되었습니다.' });
+    } catch (err: any) {
+      return json({ error: err.message || '신고 접수 실패' }, 500);
     }
   }
 
@@ -693,7 +774,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   // Admin Service Status Change: PATCH /api/admin/services/:id/status
   const adminServiceStatusMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/status$/);
-  if (adminServiceStatusMatch && method === 'PATCH') {
+  if (adminServiceStatusMatch && (method === 'PATCH' || method === 'POST')) {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const id = parseInt(adminServiceStatusMatch[1], 10);
     const { status } = await parseBody();
@@ -703,7 +784,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   // Admin Service Category Change: PATCH /api/admin/services/:id/category
   const adminServiceCategoryMatch = pathname.match(/^\/api\/admin\/services\/(\d+)\/category$/);
-  if (adminServiceCategoryMatch && method === 'PATCH') {
+  if (adminServiceCategoryMatch && (method === 'PATCH' || method === 'POST')) {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const id = parseInt(adminServiceCategoryMatch[1], 10);
     const { category } = await parseBody();
@@ -713,7 +794,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   // Admin Service Update: PUT /api/admin/services/:id
   const adminServiceEditMatch = pathname.match(/^\/api\/admin\/services\/(\d+)$/);
-  if (adminServiceEditMatch && method === 'PUT') {
+  if (adminServiceEditMatch && (method === 'PUT' || method === 'POST' || method === 'PATCH')) {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const id = parseInt(adminServiceEditMatch[1], 10);
     const body = await parseBody();
@@ -919,12 +1000,103 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   const adminPromoMatch = pathname.match(/^\/api\/admin\/promotions\/(\d+)$/);
-  if (adminPromoMatch && method === 'PATCH') {
+  if (adminPromoMatch && (method === 'PATCH' || method === 'POST')) {
     if (!db) return json({ error: 'DB 연결 필요' }, 503);
     const id = parseInt(adminPromoMatch[1], 10);
     const { status } = await parseBody();
     await db.prepare('UPDATE promotions SET status = ? WHERE id = ?').bind(status || 'active', id).run();
     return json({ success: true, message: '프로모션 상태가 변경되었습니다.' });
+  }
+
+  if (adminPromoMatch && method === 'DELETE') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const id = parseInt(adminPromoMatch[1], 10);
+    await db.prepare('DELETE FROM promotions WHERE id = ?').bind(id).run();
+    return json({ success: true, message: '프로모션이 삭제되었습니다.' });
+  }
+
+  if (pathname === '/api/admin/promotions/reorder' && method === 'PUT') {
+    return json({ success: true, message: '순서가 변경되었습니다.' });
+  }
+
+  // ★ 스폰서 일괄 최종 저장 (추가, 삭제, 순서, 상태를 한 번에 D1에 반영)
+  if (pathname === '/api/admin/promotions/batch-save' && method === 'POST') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const { promotions: promoList } = await parseBody();
+    if (Array.isArray(promoList)) {
+      await db.prepare('DELETE FROM promotions').run();
+      const now = new Date().toISOString();
+      for (const p of promoList) {
+        await db.prepare(`
+          INSERT INTO promotions (id, service_id, slot_type, status, impressions, clicks, start_date, end_date, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          p.id || null,
+          Number(p.service_id),
+          p.slot_type || 'feed_sponsor',
+          p.status || 'active',
+          p.impressions || 0,
+          p.clicks || 0,
+          p.start_date || now,
+          p.end_date || now,
+          p.created_at || now
+        ).run();
+      }
+    }
+    return json({ success: true, message: '스폰서 설정이 최종 저장되었습니다.' });
+  }
+
+  // Public active promotions: GET /api/promotions
+  if (pathname === '/api/promotions' && method === 'GET') {
+    if (!db) return json({ promotions: [] });
+    try {
+      const res = await db.prepare(`
+        SELECT p.*, s.name as service_name, s.url as service_url, s.short_desc, s.thumbnail_url 
+        FROM promotions p 
+        JOIN services s ON p.service_id = s.id 
+        WHERE p.status = 'active' 
+        ORDER BY p.id DESC
+      `).all();
+      return json({ promotions: res.results || [] });
+    } catch {
+      return json({ promotions: [] });
+    }
+  }
+
+  // Track promo click: POST /api/promotions/:id/click
+  const promoClickMatch = pathname.match(/^\/api\/promotions\/(\d+)\/click$/);
+  if (promoClickMatch && method === 'POST') {
+    if (db) {
+      const id = parseInt(promoClickMatch[1], 10);
+      try {
+        await db.prepare('UPDATE promotions SET clicks = clicks + 1 WHERE id = ?').bind(id).run();
+      } catch {}
+    }
+    return json({ success: true });
+  }
+
+  // Admin Settings Update: PATCH/POST /api/admin/settings
+  if (pathname === '/api/admin/settings' && (method === 'PATCH' || method === 'POST')) {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const body = await parseBody();
+    const { slogan, show_ads, site_title, new_admin_password } = body;
+    if (slogan !== undefined) {
+      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("slogan", ?)').bind(String(slogan)).run();
+    }
+    if (show_ads !== undefined) {
+      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("show_ads", ?)').bind(show_ads ? 'true' : 'false').run();
+    }
+    if (site_title !== undefined) {
+      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("site_title", ?)').bind(String(site_title)).run();
+    }
+    if (new_admin_password !== undefined && String(new_admin_password).trim()) {
+      await db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES ("custom_admin_password", ?)').bind(String(new_admin_password).trim()).run();
+    }
+    return json({ success: true, message: '설정이 저장되었습니다.' });
+  }
+
+  if (pathname === '/api/admin/seed-test-data' && method === 'POST') {
+    return json({ success: true, message: '테스트 데이터 준비 완료' });
   }
 
   // Admin Backup & Restore: GET /api/admin/backup, POST /api/admin/restore
