@@ -488,23 +488,37 @@ export default function App() {
               onTagSortChange={setTagSort}
             />
 
-            {/* Popular Tag Clouds */}
+        {/* Popular Tag Clouds */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-4 border-t-2 border-[#0A0A0A]">
-              {tags.map((t) => (
-                <div
-                  key={t.id}
-                  onClick={() => {
-                    setSelectedTag(t.name);
-                    setActiveTab('discover');
-                  }}
-                  className="p-3 bg-white border-2 border-[#0A0A0A] rounded-xl shadow-[3px_3px_0_#0A0A0A] hover:bg-[#FFD23F] transition-all cursor-pointer flex items-center justify-between"
-                >
-                  <span className="font-bold text-xs text-[#0A0A0A]">#{t.name}</span>
-                  <span className="font-mono text-xs font-bold bg-[#F1F0E8] px-2 py-0.5 rounded border border-[#0A0A0A]">
-                    {t.service_count}개
-                  </span>
-                </div>
-              ))}
+              {(() => {
+                const baseList = (tags && tags.length > 0 ? tags : DEFAULT_FALLBACK_TAGS);
+                const tagListWithLiveCounts = baseList.map((t) => {
+                  const liveCount = services.filter((s) => Array.isArray(s.tags) && s.tags.includes(t.name)).length;
+                  const countVal = Math.max(Number(t.service_count ?? (t as any).count ?? 0), liveCount);
+                  return { ...t, service_count: countVal };
+                });
+
+                // 많은 순으로 맨 앞에 정렬!
+                tagListWithLiveCounts.sort((a, b) => b.service_count - a.service_count || a.name.localeCompare(b.name, 'ko'));
+
+                return tagListWithLiveCounts.map((t) => (
+                  <div
+                    key={t.id}
+                    onClick={() => {
+                      setSelectedTag(t.name);
+                      setActiveTab('discover');
+                    }}
+                    className="p-3 bg-white border-2 border-[#0A0A0A] rounded-xl shadow-[3px_3px_0_#0A0A0A] hover:bg-[#FFD23F] transition-all cursor-pointer flex items-center justify-between"
+                  >
+                    <span className="font-bold text-xs text-[#0A0A0A]">#{t.name}</span>
+                    <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded border border-[#0A0A0A] transition-colors ${
+                      t.service_count > 0 ? 'bg-[#FFD23F] text-[#0A0A0A]' : 'bg-[#F1F0E8] text-[#52525B]'
+                    }`}>
+                      {t.service_count}개
+                    </span>
+                  </div>
+                ));
+              })()}
             </div>
           </div>
         )}
