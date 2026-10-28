@@ -128,12 +128,35 @@ export async function fetchCategories(): Promise<{ categories: { name: string; c
   }
 }
 
+export const DEFAULT_FALLBACK_TAGS: TagItem[] = [
+  '웹앱', '웹게임', '글쓰기', '기록', '대시보드', '디자인', '템플릿',
+  '메모', '분석', '생산성', 'AI챗', '시각화', '자동화', '협업'
+].map((name, index) => ({
+  id: index + 1,
+  name,
+  normalized_name: name.toLowerCase(),
+  service_count: 0,
+  recent_growth: 0,
+  created_at: new Date().toISOString()
+}));
+
 export async function fetchTags(sort: 'count' | 'trending' | 'name' = 'count'): Promise<{ tags: TagItem[] }> {
   try {
     const res = await fetch(`${BASE_URL}/tags?sort=${sort}`);
-    return await handleResponse(res, '태그 목록을 불러오지 못했습니다.');
+    const data = await handleResponse<{ tags: any[] }>(res, '태그 목록을 불러오지 못했습니다.');
+    const rawList = Array.isArray(data.tags) && data.tags.length > 0 ? data.tags : DEFAULT_FALLBACK_TAGS;
+    const tags = rawList.map((t: any, idx: number) => ({
+      ...t,
+      id: t.id || idx + 1,
+      name: t.name,
+      normalized_name: t.normalized_name || t.name.toLowerCase(),
+      service_count: Number(t.service_count !== undefined ? t.service_count : (t.count ?? 0)),
+      recent_growth: Number(t.recent_growth ?? 0),
+      created_at: t.created_at || new Date().toISOString()
+    }));
+    return { tags };
   } catch {
-    return { tags: [] };
+    return { tags: DEFAULT_FALLBACK_TAGS };
   }
 }
 
