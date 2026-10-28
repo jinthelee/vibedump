@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   X, Shield, AlertCircle, Check, Eye, Heart, Edit, Megaphone, Trash2, Tag,
   DollarSign, BarChart2, Ban, Sparkles, RefreshCw, ShieldAlert, RotateCcw, ExternalLink,
-  Download, Upload, Save, FolderKanban, ArrowUp, ArrowDown, Plus, RotateCw
+  Download, Upload, Save, FolderKanban, ArrowUp, ArrowDown, Plus, RotateCw,
+  Minimize2, Maximize2, Move, EyeOff
 } from 'lucide-react';
 import {
   verifyMaker, updateMakerService, createMakerPost, deleteMakerService,
@@ -10,7 +11,7 @@ import {
   adminGetReports, adminResolveReport, adminGetReviews, adminUpdateReviewStatus,
   adminGetTags, adminMergeTags, adminGetCurations, adminCreateCuration,
   adminDeleteCuration, adminGetPromotions, adminCreatePromotion,
-  adminTogglePromotion, adminGetStats, fetchSettings, updateAdminSettings,
+  adminTogglePromotion, adminDeletePromotion, adminReorderPromotions, adminSaveAllPromotions, adminGetStats, fetchSettings, updateAdminSettings,
   adminUpdateTagStatus, adminDeleteTag, adminDownloadBackup, adminRestoreBackup,
   adminGetCategories, adminAddCategory, adminSaveCategories, adminRenameCategory, adminDeleteCategory
 } from '../lib/api';
@@ -53,6 +54,41 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
   useEffect(() => {
     if (siteTitle) setCurrentSiteTitle(siteTitle);
   }, [siteTitle]);
+
+  // Window controls & Dragging (Requirement 2)
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [isTransparent, setIsTransparent] = useState(false);
+  const [isPeeking, setIsPeeking] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Staged promotions for manual saving (Requirement 3)
+  const [stagedPromos, setStagedPromos] = useState<Promotion[]>([]);
+  const [hasUnsavedPromos, setHasUnsavedPromos] = useState(false);
+
+  const handleHeaderMouseDown = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, input, select, a, label')) return;
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - pos.x, y: e.clientY - pos.y });
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging) return;
+      setPos({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+    };
+    const handleMouseUp = () => setIsDragging(false);
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, dragStart]);
 
   // Maker Studio state
   const [serviceIdInput, setServiceIdInput] = useState('');
@@ -400,8 +436,9 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
       setReports(repRes.reports);
       setReviews(revRes.reviews);
       setTags(tagRes.tags);
-      setCurations(curRes.curations);
       setPromotions(pRes.promotions);
+      setStagedPromos(pRes.promotions || []);
+      setHasUnsavedPromos(false);
       if (Array.isArray(catRes.categories) && catRes.categories.length > 0) {
         setAdminCategories(catRes.categories);
       }
@@ -827,13 +864,136 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
     }
   };
 
+  // Staged promotions handlers (저장해야지만 최종 반영)
+  const handleStageCreatePromotion = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!promoServiceId) return;
+    const sId = Number(promoServiceId);
+    const targetService = services.find((s) => s.id === sId);
+    const newPromo: Promotion = {
+      id: Date.now(),
+      service_id: sId,
+      service_name: targetService?.name || `서비스 #${sId}`,
+      slot_type: promoSlot,
+      status: 'active',
+      impressions: 0,
+      clicks: 0,
+      start_date: new Date().toISOString(),
+      end_date: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    setStagedPromos((prev) => [newPromo, ...prev]);
+    setHasUnsavedPromos(true);
+    setPromoServiceId('');
+    setAdminMsg('스폰서가 추가되었습니다. [변경사항 사이트 반영(저장)] 버튼을 눌러야 최종 적용됩니다.');
+  };
+
+  const handleStageTogglePromotion = async (index: number) => {
+    const updated = stagedPromos.map((p, i) =>
+      i === index ? { ...p, status: (p.status === 'active' ? 'paused' : 'active') as 'active' | 'paused' } : p
+    );
+    setStagedPromos(updated);
+    if (adminToken) {
+      try {
+        await adminSaveAllPromotions(updated, adminToken);
+        setHasUnsavedPromos(false);
+        setAdminMsg('스폰서 상태가 변경되어 즉시 사이트에 반영되었습니다.');
+        onRefreshAll();
+        setTimeout(() => setAdminMsg(null), 3000);
+        return;
+      } catch (err) {
+        console.warn('Direct toggle sync error', err);
+      }
+    }
+    setHasUnsavedPromos(true);
+  };
+
+  const handleStageDeletePromotion = async (index: number) => {
+    const promoToDelete = stagedPromos[index];
+    const nextPromos = stagedPromos.filter((_, i) => i !== index);
+    setStagedPromos(nextPromos);
+
+    if (adminToken) {
+      try {
+        if (promoToDelete?.id) {
+          await adminDeletePromotion(promoToDelete.id, adminToken);
+        }
+        await adminSaveAllPromotions(nextPromos, adminToken);
+        setHasUnsavedPromos(false);
+        setAdminMsg('스폰서 캠페인이 삭제되어 사이트에서 즉시 제거되었습니다.');
+        onRefreshAll();
+        setTimeout(() => setAdminMsg(null), 3000);
+        return;
+      } catch (err) {
+        console.warn('Direct delete sync error', err);
+      }
+    }
+
+    setHasUnsavedPromos(true);
+    setAdminMsg('스폰서 항목이 제거되었습니다. [변경사항 사이트 반영(저장)] 버튼을 눌러야 최종 적용됩니다.');
+  };
+
+  const handleStageMovePromotion = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= stagedPromos.length) return;
+    setStagedPromos((prev) => {
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[targetIndex];
+      next[targetIndex] = temp;
+      return next;
+    });
+    setHasUnsavedPromos(true);
+  };
+
+  const handleSaveAllPromotionsFinal = async () => {
+    if (!adminToken) return;
+    try {
+      await adminSaveAllPromotions(stagedPromos, adminToken);
+      setPromotions(stagedPromos);
+      setHasUnsavedPromos(false);
+      setAdminMsg('🎉 스폰서 설정이 최종 저장 및 사이트에 즉시 반영되었습니다!');
+      loadAdminData(adminToken);
+      onRefreshAll();
+      setTimeout(() => setAdminMsg(null), 3500);
+    } catch (err: any) {
+      alert(err.message || '스폰서 저장 실패');
+    }
+  };
+
   const pendingTags = tags.filter((t) => (t as any).status === 'pending');
 
+  // 창 최소화 모드: 우측 하단 플로팅 독 버튼으로 접힘
+  if (isMinimized) {
+    return (
+      <div className="fixed bottom-6 right-6 z-50 animate-in fade-in zoom-in duration-150">
+        <button
+          type="button"
+          onClick={() => setIsMinimized(false)}
+          className="flex items-center gap-2 px-4 py-2.5 bg-[#FFD23F] hover:bg-[#FFE066] text-[#0A0A0A] font-black border-2 border-[#0A0A0A] rounded-xl shadow-[4px_4px_0_#0A0A0A] text-xs active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
+          title="클릭하여 사이트 관리창을 다시 엽니다"
+        >
+          <span className="text-base">🛠️</span>
+          <span>사이트 관리 모드</span>
+          <span className="bg-white/90 px-1.5 py-0.5 rounded text-[10px] font-mono border border-[#0A0A0A]/30">펼치기</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-3 sm:p-6 flex items-center justify-center">
-      <div className="relative w-full max-w-4xl bg-[#FAFAF5] rounded-xl border-2 border-[#0A0A0A] shadow-[8px_8px_0_#0A0A0A] overflow-hidden my-6 max-h-[92vh] flex flex-col">
-        {/* Header with Mode Switcher */}
-        <div className="px-5 py-3 border-b-2 border-[#0A0A0A] flex items-center justify-between gap-4 bg-[#FFD23F]">
+    <div className={`fixed inset-0 z-50 overflow-y-auto p-3 sm:p-6 flex items-center justify-center transition-colors ${
+      isTransparent ? 'bg-transparent pointer-events-none' : 'bg-black/60'
+    }`}>
+      <div className={`relative w-full max-w-4xl rounded-xl border-2 border-[#0A0A0A] overflow-hidden my-6 max-h-[92vh] flex flex-col pointer-events-auto transition-opacity duration-150 ${
+        isPeeking
+          ? 'opacity-0 pointer-events-none'
+          : isTransparent
+          ? 'opacity-40 bg-[#FAFAF5]/85 shadow-2xl border-dashed border-amber-600'
+          : 'opacity-100 bg-[#FAFAF5] shadow-[8px_8px_0_#0A0A0A]'
+      }`}>
+        {/* Header with Mode Switcher & Transparency Toggle */}
+        <div className="px-5 py-3 border-b-2 border-[#0A0A0A] flex items-center justify-between gap-4 bg-[#FFD23F] flex-wrap">
           <div className="flex items-center gap-2">
             <span className="font-display text-lg text-[#0A0A0A]">사이트 관리</span>
             <div className="flex items-center gap-1 bg-white p-0.5 rounded border border-[#0A0A0A] text-xs font-bold ml-2">
@@ -856,12 +1016,55 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-1.5 bg-white border border-[#0A0A0A] rounded text-[#0A0A0A] hover:bg-[#F1F0E8]"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onMouseDown={() => setIsPeeking(true)}
+              onMouseUp={() => setIsPeeking(false)}
+              onMouseLeave={() => setIsPeeking(false)}
+              onTouchStart={() => setIsPeeking(true)}
+              onTouchEnd={() => setIsPeeking(false)}
+              className="px-2.5 py-1 bg-white hover:bg-neutral-100 border border-[#0A0A0A] rounded text-xs font-bold flex items-center gap-1 shadow-[1px_1px_0_#0A0A0A] active:scale-95 transition-transform select-none cursor-pointer"
+              title="마우스로 누르고 있는 동안 창이 완전히 사라져 뒤 실제 사이트 화면을 100% 봅니다"
+            >
+              <Eye className="w-3.5 h-3.5 text-amber-600" />
+              <span>꾹 눌러 뒤 보기</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsTransparent(!isTransparent)}
+              className={`px-2.5 py-1 border border-[#0A0A0A] rounded text-xs font-bold flex items-center gap-1 shadow-[1px_1px_0_#0A0A0A] active:translate-x-0.5 transition-colors ${
+                isTransparent ? 'bg-amber-400 text-black font-black' : 'bg-white text-[#0A0A0A] hover:bg-neutral-100'
+              }`}
+              title="창을 40% 반투명하게 만들어 뒤 사이트가 훤히 보이게 합니다 (마우스를 올려도 불투명해지지 않음)"
+            >
+              {isTransparent ? (
+                <>
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>창 불투명화</span>
+                </>
+              ) : (
+                <>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>창 반투명화 (뒤 투시)</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsMinimized(true)}
+              className="px-2 py-1 bg-white border border-[#0A0A0A] rounded text-[#0A0A0A] hover:bg-[#F1F0E8] text-xs font-mono font-bold shadow-[1px_1px_0_#0A0A0A]"
+              title="창 최소화 (우측 하단 작은 위젯으로 접어 뒤 사이트를 자유롭게 확인합니다)"
+            >
+              —
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 bg-white border border-[#0A0A0A] rounded text-[#0A0A0A] hover:bg-[#F1F0E8]"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Body */}
@@ -2307,79 +2510,162 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
                   </div>
                 )}
 
-                {/* Requirement 8: Promotions Tab with 'floating_ad' */}
+                {/* Requirement 8: Promotions Tab */}
                 {adminTab === 'promotions' && (
-                  <div className="space-y-3">
-                    <div className="p-3 bg-[#FFF3C4] border-2 border-[#0A0A0A] rounded-xl text-xs space-y-1 shadow-[2px_2px_0_#0A0A0A]">
-                      <b className="text-[#0A0A0A] block">📢 유료 홍보 상품 안내</b>
-                      <p className="text-[#52525B] font-medium">
-                        메인 상단 스폰서 노출, 큐레이션 최상단 고정 등 유료 홍보 상품은 <strong>현재 운영하지 않습니다.</strong> (아래 폼은 관리자 시스템 기능 검증용 자체 슬롯 테스트 도구입니다.)
+                  <div className="space-y-4">
+                    <div className="p-3.5 bg-[#FFF3C4] border-2 border-[#0A0A0A] rounded-xl text-xs space-y-1 shadow-[2px_2px_0_#0A0A0A]">
+                      <b className="text-[#0A0A0A] block">📢 스폰서 및 광고 슬롯 관리</b>
+                      <p className="text-[#52525B] leading-relaxed">
+                        • <strong>목록 스폰서 카드</strong>: 일반 사이트들보다 항상 피드 최상단에 고정 노출됩니다. 우측 ▲▼ 버튼으로 스폰서 간 노출 순서를 바꿀 수 있습니다.<br />
+                        • <strong>하단 플로팅 광고 바</strong>: 사이트 하단 노란 배너에 [서비스명] 한줄소개 형식으로 노출되며 클릭 시 해당 서비스로 이동합니다.
                       </p>
                     </div>
 
-                    <form onSubmit={handleCreatePromotion} className="p-3 bg-[#FAFAF5] border-2 border-[#0A0A0A] rounded-lg text-xs space-y-2">
-                      <b className="block">유료 추천 노출 캠페인 생성</b>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <form onSubmit={handleStageCreatePromotion} className="p-3 bg-[#FAFAF5] border-2 border-[#0A0A0A] rounded-xl text-xs space-y-2.5 shadow-[2px_2px_0_#0A0A0A]">
+                      <b className="block text-[#0A0A0A] font-display text-sm">신규 스폰서 캠페인 등록 (임시 추가)</b>
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
                         <select
                           required
                           value={promoServiceId}
                           onChange={(e) => setPromoServiceId(e.target.value)}
-                          className="px-2 py-1.5 bg-white border-2 border-[#0A0A0A] rounded text-xs"
+                          className="sm:col-span-6 px-3 py-2 bg-white border-2 border-[#0A0A0A] rounded-lg text-xs font-bold"
                         >
-                          <option value="">공개 서비스 선택</option>
+                          <option value="">스폰서 적용할 사이트 선택</option>
                           {services.map((s, idx) => (
                             <option key={`promo-svc-${s.id || idx}`} value={s.id}>
-                              #{s.id} {s.name}
+                              #{s.id} {s.name} ({s.category})
                             </option>
                           ))}
                         </select>
                         <select
                           value={promoSlot}
                           onChange={(e) => setPromoSlot(e.target.value)}
-                          className="px-2 py-1.5 bg-white border-2 border-[#0A0A0A] rounded text-xs font-bold"
+                          className="sm:col-span-4 px-3 py-2 bg-white border-2 border-[#0A0A0A] rounded-lg text-xs font-bold"
                         >
+                          <option value="feed_sponsor">목록 상단 스폰서 (피드 최상단 고정)</option>
+                          <option value="curation_sponsor">큐레이션 스폰서 (이번 주 큐레이션 스폰서 딱지)</option>
                           <option value="floating_ad">하단 플로팅 광고 바</option>
-                          <option value="feed_sponsor">목록 스폰서 카드</option>
-                          <option value="main_hero">메인 추천 영역</option>
-                          <option value="category_top">카테고리 상단</option>
                         </select>
-                        <button type="submit" className="px-3 py-1.5 bg-[#FFD23F] border-2 border-[#0A0A0A] rounded font-bold">
-                          캠페인 생성
+                        <button
+                          type="submit"
+                          className="sm:col-span-2 px-3 py-2 bg-[#FFD23F] hover:bg-[#FFD23F]/85 border-2 border-[#0A0A0A] rounded-lg font-bold text-xs shadow-[2px_2px_0_#0A0A0A] active:translate-x-0.5"
+                        >
+                          추가하기
                         </button>
                       </div>
                     </form>
 
-                    <div className="space-y-1.5">
-                      {promotions.map((p, idx) => {
-                        const slotLabel =
-                          p.slot_type === 'floating_ad'
-                            ? '하단 플로팅 광고 바'
-                            : p.slot_type === 'feed_sponsor'
-                            ? '목록 스폰서 카드'
-                            : p.slot_type === 'main_hero'
-                            ? '메인 추천'
-                            : '카테고리 상단';
+                    {/* Unsaved changes alert */}
+                    {hasUnsavedPromos && (
+                      <div className="p-3 bg-[#FFF3C4] border-2 border-[#0A0A0A] rounded-xl text-xs font-bold text-[#0A0A0A] flex items-center justify-between gap-2 shadow-[2px_2px_0_#0A0A0A]">
+                        <span>⚠️ 저장되지 않은 스폰서 변경사항(추가/삭제/순서)이 있습니다.</span>
+                        <span className="text-[11px] text-[#C81E4B]">아래 초록색 저장 버튼을 눌러야 최종 적용됩니다.</span>
+                      </div>
+                    )}
 
-                        return (
-                          <div
-                            key={`admin-promo-${p.id || idx}`}
-                            className="p-2.5 bg-white border-2 border-[#0A0A0A] rounded-lg flex items-center justify-between text-xs font-bold"
-                          >
-                            <div className="flex items-center gap-1.5">
-                              <span className="bg-[#FFD23F] px-1.5 py-0.5 rounded border border-[#0A0A0A] text-[10px] font-black">
-                                {slotLabel}
-                              </span>
-                              <span>#{p.service_id} · 노출 {p.impressions} · 클릭 {p.clicks}</span>
-                            </div>
-                            <button
-                              onClick={() => handleTogglePromotion(p.id, p.status === 'active' ? 'paused' : 'active')}
-                              className="px-2 py-0.5 bg-[#F1F0E8] border border-[#0A0A0A] rounded"
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold text-[#52525B]">
+                        <span>현재 스폰서 목록 ({stagedPromos.length}개)</span>
+                        <span>순서 변경: ▲ ▼ 버튼</span>
+                      </div>
+
+                      {stagedPromos.length === 0 ? (
+                        <p className="text-xs text-[#52525B] text-center py-6 bg-white border-2 border-[#0A0A0A] rounded-xl font-bold">
+                          현재 등록된 스폰서 캠페인이 없습니다.
+                        </p>
+                      ) : (
+                        stagedPromos.map((p, idx) => {
+                          const slotLabel =
+                            p.slot_type === 'floating_ad'
+                              ? '하단 플로팅 바'
+                              : p.slot_type === 'curation_sponsor'
+                              ? '큐레이션 스폰서'
+                              : '목록 상단 스폰서';
+                          const targetService = services.find((s) => s.id === p.service_id);
+                          const serviceTitle = targetService?.name || (p as any).service_name || `#${p.service_id}`;
+
+                          return (
+                            <div
+                              key={`admin-promo-${p.id || idx}`}
+                              className="p-3 bg-white border-2 border-[#0A0A0A] rounded-xl flex items-center justify-between text-xs font-bold shadow-[2px_2px_0_#0A0A0A] gap-2 flex-wrap"
                             >
-                              {p.status === 'active' ? '중지' : '재개'}
-                            </button>
-                          </div>
-                        );
-                      })}
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="w-5 h-5 rounded-full bg-[#0A0A0A] text-white flex items-center justify-center font-mono text-[10px] shrink-0">
+                                  {idx + 1}
+                                </span>
+                                <span className="bg-[#FFD23F] text-[#0A0A0A] px-2 py-0.5 rounded border border-[#0A0A0A] text-[10px] font-black shrink-0">
+                                  {slotLabel}
+                                </span>
+                                <span className="text-[#0A0A0A] truncate font-bold text-xs">
+                                  {serviceTitle}
+                                </span>
+                                <span className="text-[11px] text-[#52525B] font-mono shrink-0 hidden sm:inline">
+                                  (노출 {p.impressions || 0} · 클릭 {p.clicks || 0})
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {/* Up / Down Order */}
+                                <button
+                                  type="button"
+                                  disabled={idx === 0}
+                                  onClick={() => handleStageMovePromotion(idx, 'up')}
+                                  className="p-1.5 bg-white border border-[#0A0A0A] rounded hover:bg-neutral-100 disabled:opacity-30 disabled:pointer-events-none"
+                                  title="순위 위로 올리기"
+                                >
+                                  <ArrowUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={idx === stagedPromos.length - 1}
+                                  onClick={() => handleStageMovePromotion(idx, 'down')}
+                                  className="p-1.5 bg-white border border-[#0A0A0A] rounded hover:bg-neutral-100 disabled:opacity-30 disabled:pointer-events-none"
+                                  title="순위 아래로 내리기"
+                                >
+                                  <ArrowDown className="w-3.5 h-3.5" />
+                                </button>
+
+                                {/* Toggle Active / Paused */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleStageTogglePromotion(idx)}
+                                  className={`px-2 py-1 border border-[#0A0A0A] rounded text-[11px] font-bold ${
+                                    p.status === 'active' ? 'bg-[#06D6A0] text-[#0A0A0A]' : 'bg-neutral-200 text-[#52525B]'
+                                  }`}
+                                >
+                                  {p.status === 'active' ? '활성' : '중지'}
+                                </button>
+
+                                {/* Delete */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleStageDeletePromotion(idx)}
+                                  className="p-1.5 bg-[#FF6B9E] hover:bg-[#FF6B9E]/85 border border-[#0A0A0A] rounded text-[#0A0A0A]"
+                                  title="스폰서 삭제"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Final Save Button */}
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={handleSaveAllPromotionsFinal}
+                        className={`w-full py-3 border-2 border-[#0A0A0A] rounded-xl font-display text-sm font-black shadow-[3px_3px_0_#0A0A0A] active:translate-x-0.5 active:translate-y-0.5 transition-all flex items-center justify-center gap-2 ${
+                          hasUnsavedPromos
+                            ? 'bg-[#06D6A0] text-[#0A0A0A] hover:bg-[#06D6A0]/90 animate-pulse'
+                            : 'bg-[#FFD23F] text-[#0A0A0A] hover:bg-[#FFD23F]/90'
+                        }`}
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>스폰서 변경사항 최종 저장 및 사이트 반영</span>
+                      </button>
                     </div>
                   </div>
                 )}
