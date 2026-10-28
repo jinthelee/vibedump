@@ -217,7 +217,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       let sql = `
         SELECT s.id, s.name, s.url, s.short_desc, s.description, s.category,
-               s.thumbnail_url, s.screenshot_url, s.maker_name, s.maker_email,
+               s.thumbnail_url, s.screenshot_url, s.maker_name, 
                s.status, s.views_count, s.likes_count, s.created_at, s.updated_at
         FROM services s
         WHERE s.status = 'approved'
