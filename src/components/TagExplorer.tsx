@@ -213,7 +213,7 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
         </form>
       )}
 
-      {/* Tags List */}
+{/* Tags List */}
       <div className="flex flex-wrap items-center gap-1.5">
         {displayTags.map((tag) => {
           const isSelected = selectedTag === tag.name;
@@ -228,17 +228,6 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
               }`}
             >
               <span>#{tag.name}</span>
-              <span
-                className={`text-[10px] font-mono px-1.5 py-0.5 rounded transition-all ${
-                  (tag.service_count ?? (tag as any).count ?? 0) > 0
-                    ? isSelected
-                      ? 'bg-[#0A0A0A] text-[#FFD23F] font-black'
-                      : 'bg-[#FFD23F] text-[#0A0A0A] font-black border border-[#0A0A0A]'
-                    : 'opacity-60 bg-neutral-100 text-neutral-600'
-                }`}
-              >
-                {tag.service_count ?? (tag as any).count ?? 0}
-              </span>
               {tag.recent_growth > 0 && tagSort === 'trending' && (
                 <span className="text-[10px] text-[#C81E4B] font-black">+{tag.recent_growth}</span>
               )}
