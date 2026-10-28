@@ -154,7 +154,7 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
             >
               <span>#{tag.name}</span>
               <span className="text-[10px] opacity-75 font-mono">
-                {tag.service_count}
+                {tag.service_count ?? (tag as any).count ?? 0}
               </span>
               {tag.recent_growth > 0 && tagSort === 'trending' && (
                 <span className="text-[10px] text-[#C81E4B] font-black">+{tag.recent_growth}</span>
