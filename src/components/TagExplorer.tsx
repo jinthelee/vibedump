@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
-import { TagItem } from '../types';
+import React, { useState, useMemo } from 'react';
+import { TagItem, Service } from '../types';
 import { TrendingUp, Plus, X } from 'lucide-react';
 import { suggestTag } from '../lib/api';
 
 interface TagExplorerProps {
   tags: TagItem[];
+  services?: Service[];
   selectedTag: string | null;
   onSelectTag: (tagName: string | null) => void;
   onTagCreated?: () => void;
@@ -12,8 +13,21 @@ interface TagExplorerProps {
   onTagSortChange: (sort: 'count' | 'trending' | 'name') => void;
 }
 
+const DEFAULT_TAG_LIST: TagItem[] = [
+  '웹앱', '웹게임', '글쓰기', '기록', '대시보드', '디자인', '템플릿',
+  '메모', '분석', '생산성', 'AI챗', '시각화', '자동화', '협업'
+].map((name, index) => ({
+  id: index + 1,
+  name,
+  normalized_name: name.toLowerCase(),
+  service_count: 0,
+  recent_growth: 0,
+  created_at: new Date().toISOString()
+}));
+
 export const TagExplorer: React.FC<TagExplorerProps> = ({
   tags,
+  services,
   selectedTag,
   onSelectTag,
   onTagCreated,
@@ -24,6 +38,67 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
   const [newTagName, setNewTagName] = useState('');
   const [proposeMessage, setProposeMessage] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Dynamic tags: merge tags prop, sync with services, and sort by count/trending/name
+  const displayTags = useMemo(() => {
+    let list = (Array.isArray(tags) && tags.length > 0) ? [...tags] : [...DEFAULT_TAG_LIST];
+
+    // Count tags from services if services array is provided
+    if (Array.isArray(services) && services.length > 0) {
+      const liveCounts = new Map<string, number>();
+      services.forEach((s) => {
+        if (Array.isArray(s.tags)) {
+          s.tags.forEach((raw) => {
+            const t = String(raw).trim();
+            if (t) liveCounts.set(t, (liveCounts.get(t) || 0) + 1);
+          });
+        }
+      });
+
+      const existingMap = new Map<string, TagItem>();
+      list.forEach((t) => existingMap.set(t.name, t));
+
+      // Update existing tags with live counts
+      list = list.map((t) => {
+        const live = liveCounts.get(t.name) || 0;
+        const current = Number(t.service_count ?? (t as any).count ?? 0);
+        return {
+          ...t,
+          service_count: Math.max(current, live),
+        };
+      });
+
+      // Automatically add any NEW tags from registered services
+      liveCounts.forEach((count, name) => {
+        if (!existingMap.has(name)) {
+          list.push({
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            name,
+            normalized_name: name.toLowerCase(),
+            service_count: count,
+            recent_growth: 1,
+            created_at: new Date().toISOString(),
+          });
+        }
+      });
+    }
+
+    // Sort according to tagSort
+    if (tagSort === 'trending') {
+      list.sort((a, b) => (b.recent_growth ?? 0) - (a.recent_growth ?? 0) || (b.service_count ?? 0) - (a.service_count ?? 0));
+    } else if (tagSort === 'name') {
+      list.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+    } else {
+      // Default: 'count' (많은 순으로 정렬!)
+      list.sort((a, b) => {
+        const diff = (b.service_count ?? (b as any).count ?? 0) - (a.service_count ?? (a as any).count ?? 0);
+        if (diff !== 0) return diff;
+        return a.name.localeCompare(b.name, 'ko');
+      });
+    }
+
+    return list;
+  }, [tags, services, tagSort]);
 
   const handlePropose = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,7 +215,7 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
 
       {/* Tags List */}
       <div className="flex flex-wrap items-center gap-1.5">
-        {tags.map((tag) => {
+        {displayTags.map((tag) => {
           const isSelected = selectedTag === tag.name;
           return (
             <button
@@ -153,7 +228,15 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
               }`}
             >
               <span>#{tag.name}</span>
-              <span className="text-[10px] opacity-75 font-mono">
+              <span
+                className={`text-[10px] font-mono px-1.5 py-0.5 rounded transition-all ${
+                  (tag.service_count ?? (tag as any).count ?? 0) > 0
+                    ? isSelected
+                      ? 'bg-[#0A0A0A] text-[#FFD23F] font-black'
+                      : 'bg-[#FFD23F] text-[#0A0A0A] font-black border border-[#0A0A0A]'
+                    : 'opacity-60 bg-neutral-100 text-neutral-600'
+                }`}
+              >
                 {tag.service_count ?? (tag as any).count ?? 0}
               </span>
               {tag.recent_growth > 0 && tagSort === 'trending' && (
