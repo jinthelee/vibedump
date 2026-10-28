@@ -4,7 +4,7 @@ const BASE_URL = '/api';
 
 export const DEFAULT_FALLBACK_CATEGORIES = [
   '생산성', '비즈니스', '창작', '게임', '체크리스트', '사주타로',
-  '밈', '덕질', '라이프', '학습', '소셜', '캐릭터소셜'
+  '밈', '덕질', '라이프', '학습', '소셜', '캐릭터소셜' 
 ];
 
 // Robust JSON response handler that prevents "Unexpected end of JSON input"
