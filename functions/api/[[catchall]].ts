@@ -963,3 +963,4 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   // Catch-all 404 with JSON (never empty!)
   return json({ error: `Not Found: ${pathname}` }, 404);
 };
+
