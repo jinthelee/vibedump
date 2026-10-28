@@ -16,7 +16,8 @@ import { CurationsSlider } from './components/CurationsSlider';
 import { FloatingAdBanner } from './components/FloatingAdBanner';
 import {
   fetchServices, fetchCategories, fetchTags, fetchCurations,
-  fetchFavorites, fetchSettings, fetchCommunity
+  fetchFavorites, fetchSettings, fetchCommunity, fetchPromotions,
+  DEFAULT_FALLBACK_TAGS
 } from './lib/api';
 import { Service, TagItem, Curation } from './types';
 import { MessageSquare, Megaphone, Bookmark, Dices } from 'lucide-react';
@@ -130,6 +131,22 @@ export default function App() {
   useEffect(() => {
     loadServices();
   }, [loadServices]);
+
+  // Real-time synchronization of tag counts with loaded services
+  useEffect(() => {
+    if (services.length === 0) return;
+    setTags((prevTags) => {
+      const baseTags = prevTags.length > 0 ? prevTags : DEFAULT_FALLBACK_TAGS;
+      return baseTags.map((tag) => {
+        const liveCount = services.filter((s) => Array.isArray(s.tags) && s.tags.includes(tag.name)).length;
+        const currentCount = Number(tag.service_count ?? (tag as any).count ?? 0);
+        return {
+          ...tag,
+          service_count: Math.max(currentCount, liveCount),
+        };
+      });
+    });
+  }, [services]);
 
   // Requirement 2 & 3: Random recommendation discovery ("두려워말고 전진")
   const handleRandomDiscover = () => {
