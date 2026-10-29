@@ -580,47 +580,45 @@ export default function App() {
                 덤프 태그 디렉토리
               </h2>
               <p className="text-xs sm:text-sm text-[#52525B] font-medium">
-                서로 다른 공개 서비스에 연결된 빈도와 최근 7일 급상승 추이 순으로 정리된 태그 목록입니다.
+                최근 7일 급상승 추이 순으로 정리된 태그 목록입니다.
               </p>
             </div>
 
-            <TagExplorer
-              tags={tags}
-              services={services}
-              selectedTag={selectedTag}
-              onSelectTag={(t) => {
-                setSelectedTag(t);
-                setActiveTab('discover');
-              }}
-              onTagCreated={loadMetadata}
-              tagSort={tagSort}
-              onTagSortChange={setTagSort}
-            />
-
-            {/* Popular Tag Clouds: 개수 0개 제외, 사용량 많은 순 상위 20개까지만 노출 */}
+            {/* Popular Tag Clouds: 최근 7일 급상승 추이 순, 0개 제외, 상위 20개까지만 노출 */}
             {(() => {
+              const now = Date.now();
+              const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+
               const liveTagCounts = new Map<string, number>();
+              const liveRecentCounts = new Map<string, number>();
+
               (services || []).forEach((s) => {
                 if (Array.isArray(s.tags)) {
+                  const isRecent = s.created_at ? new Date(s.created_at).getTime() >= sevenDaysAgo : false;
                   s.tags.forEach((raw) => {
                     const name = String(raw).trim();
                     if (name) {
                       liveTagCounts.set(name, (liveTagCounts.get(name) || 0) + 1);
+                      if (isRecent) {
+                        liveRecentCounts.set(name, (liveRecentCounts.get(name) || 0) + 1);
+                      }
                     }
                   });
                 }
               });
 
-              const tagMap = new Map<string, { id: number | string; name: string; service_count: number }>();
+              const tagMap = new Map<string, { id: number | string; name: string; service_count: number; recent_count: number }>();
 
               (tags || []).forEach((t) => {
                 const live = liveTagCounts.get(t.name) || 0;
                 const effectiveCount = live > 0 ? live : Number(t.service_count ?? (t as any).count ?? 0);
+                const recent = liveRecentCounts.get(t.name) || Number(t.recent_growth || 0);
                 if (effectiveCount > 0) {
                   tagMap.set(t.name, {
                     id: t.id,
                     name: t.name,
                     service_count: effectiveCount,
+                    recent_count: recent,
                   });
                 }
               });
@@ -631,17 +629,23 @@ export default function App() {
                     id: name,
                     name,
                     service_count: count,
+                    recent_count: liveRecentCounts.get(name) || 0,
                   });
                 }
               });
 
+              // 최근 7일 급상승 순 -> 총 사용량 순 -> 가나다 순으로 상위 20개 추출
               const topTags = Array.from(tagMap.values())
-                .sort((a, b) => b.service_count - a.service_count || a.name.localeCompare(b.name, 'ko'))
+                .sort((a, b) => 
+                  (b.recent_count - a.recent_count) ||
+                  (b.service_count - a.service_count) ||
+                  a.name.localeCompare(b.name, 'ko')
+                )
                 .slice(0, 20);
 
               if (topTags.length === 0) {
                 return (
-                  <div className="pt-6 pb-2 border-t-2 border-[#0A0A0A] text-center">
+                  <div className="pt-6 pb-2 text-center">
                     <p className="text-xs font-bold text-[#52525B]">
                       아직 등록된 서비스 태그가 없습니다.
                     </p>
@@ -650,7 +654,7 @@ export default function App() {
               }
 
               return (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-4 border-t-2 border-[#0A0A0A]">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-2">
                   {topTags.map((t) => (
                     <div
                       key={t.id}
