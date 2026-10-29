@@ -597,7 +597,7 @@ export default function App() {
               onTagSortChange={setTagSort}
             />
 
-{/* Popular Tag Clouds: 개수 0개 제외, 사용량 많은 순 상위 20개까지만 노출 */}
+        {/* Popular Tag Clouds: 개수 0개 제외, 사용량 많은 순 상위 20개까지만 노출 */}
             {(() => {
               // 실제로 등록된 서비스들로부터 실시간 태그 사용량 계산
               const liveTagCounts = new Map<string, number>();
