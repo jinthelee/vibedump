@@ -754,8 +754,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   // 15. POST /api/admin/auth
   if (pathname === '/api/admin/auth' && method === 'POST') {
-    const { passcode } = await parseBody();
-    const cleanPass = (passcode || '').trim();
+    const body = await parseBody();
+    const cleanPass = (body.passcode || body.password || '').trim();
 
     // 1. Check D1 database for custom password
     let dbPass: string | null = null;
