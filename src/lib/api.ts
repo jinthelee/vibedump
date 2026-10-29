@@ -304,13 +304,13 @@ export async function fetchCommunity(): Promise<{
   }
 }
 
-export async function adminAuth(password: string): Promise<{ success: boolean; token: string }> {
+export async function adminAuth(passcode: string): Promise<{ success: boolean; token: string }> {
   const res = await fetch(`${BASE_URL}/admin/auth`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ passcode, password: passcode }),
   });
-  return await handleResponse(res, '관리자 인증에 실패했습니다.');
+  return await handleResponse(res, '관리자 인증 실패');
 }
 
 export async function adminGetServices(
