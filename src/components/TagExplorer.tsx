@@ -39,9 +39,8 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
   const [proposeMessage, setProposeMessage] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Dynamic tags: 기본 설정 태그(14개) + 실사용 상위 10개만 노출
+  // 기본 설정 태그(14개) + 실사용 상위 10개만 자동 계산
   const displayTags = useMemo(() => {
-    // 1. 실제로 등록된 서비스들로부터 실시간 태그 사용량 계산
     const liveCounts = new Map<string, number>();
     if (Array.isArray(services) && services.length > 0) {
       services.forEach((s) => {
@@ -54,14 +53,12 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
       });
     }
 
-    // 2. 기본 설정 태그 14개
     const defaultSet = new Set(DEFAULT_TAG_LIST.map((t) => t.name));
     const baseList: TagItem[] = DEFAULT_TAG_LIST.map((t) => ({
       ...t,
       service_count: liveCounts.get(t.name) || 0,
     }));
 
-    // 3. 기본 태그 외 실사용 태그(개수 > 0)만 수집 (삭제/병합된 0개 태그 제외)
     const extraTags: TagItem[] = [];
     const seenExtra = new Set<string>();
 
@@ -70,10 +67,7 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
         const count = liveCounts.get(t.name) || 0;
         if (count > 0) {
           seenExtra.add(t.name);
-          extraTags.push({
-            ...t,
-            service_count: count,
-          });
+          extraTags.push({ ...t, service_count: count });
         }
       }
     });
@@ -92,14 +86,11 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
       }
     });
 
-    // 4. 추가 태그 중 사용량 많은 순으로 정렬 후 상위 10개만 추출
     extraTags.sort((a, b) => (b.service_count ?? 0) - (a.service_count ?? 0) || a.name.localeCompare(b.name, 'ko'));
     const top10Extra = extraTags.slice(0, 10);
 
-    // 5. 기본 태그 14개 + 상위 10개 결합
     const combined = [...baseList, ...top10Extra];
 
-    // 현재 사용자가 선택한 태그가 목록 밖이어도 선택 해제할 수 있도록 유지
     if (selectedTag && !combined.some((t) => t.name === selectedTag)) {
       combined.push({
         id: Date.now(),
@@ -138,7 +129,7 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
         setIsProposing(false);
         setNewTagName('');
         setProposeMessage(null);
-      }, 2000);
+      }, 1500);
     } catch (err: any) {
       setProposeMessage({ type: 'error', text: err.message || '태그 제안에 실패했습니다.' });
     } finally {
@@ -147,118 +138,109 @@ export const TagExplorer: React.FC<TagExplorerProps> = ({
   };
 
   return (
-    <div className="bg-[#FAF8F5] border-3 border-[#0A0A0A] p-4 shadow-[4px_4px_0px_0px_#0A0A0A] mb-8">
-      {/* Upper Bar: Title & Propose Button */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div className="bg-white rounded-xl border-2 border-[#0A0A0A] p-4 shadow-[3px_3px_0_#0A0A0A] space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <TrendingUp className="w-5 h-5 text-[#FF6B6B]" />
-          <h2 className="text-base font-black text-[#0A0A0A] tracking-wider uppercase">
-            태그 탐색
-          </h2>
-          <span className="text-xs font-bold text-[#666666]">
-            (기본 14종 + 실사용 TOP 10)
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
+          <span className="font-display text-base text-[#0A0A0A]">태그 탐색</span>
           {selectedTag && (
             <button
               onClick={() => onSelectTag(null)}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold bg-[#FF6B6B] text-white border-2 border-[#0A0A0A] shadow-[2px_2px_0px_0px_#0A0A0A] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all"
+              className="inline-flex items-center gap-1 text-xs text-[#0A0A0A] bg-[#FFD23F] font-bold px-2 py-0.5 rounded border border-[#0A0A0A]"
             >
-              <X className="w-3.5 h-3.5" />
-              필터 초기화
+              <span>#{selectedTag} 해제</span>
+              <X className="w-3 h-3" />
             </button>
           )}
+        </div>
+
+        {/* 정렬 및 제안 버튼 */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-[#F1F0E8] p-0.5 rounded-lg border border-[#0A0A0A] text-xs font-bold">
+            <button
+              onClick={() => onTagSortChange('count')}
+              className={`px-2.5 py-1 rounded transition-colors ${
+                tagSort === 'count' ? 'bg-[#FFD23F] text-[#0A0A0A]' : 'text-[#52525B]'
+              }`}
+            >
+              사용량순
+            </button>
+            <button
+              onClick={() => onTagSortChange('trending')}
+              className={`px-2.5 py-1 rounded transition-colors flex items-center gap-1 ${
+                tagSort === 'trending' ? 'bg-[#FFD23F] text-[#0A0A0A]' : 'text-[#52525B]'
+              }`}
+            >
+              <TrendingUp className="w-3 h-3 text-[#0A0A0A]" />
+              <span>급상승</span>
+            </button>
+          </div>
 
           <button
             onClick={() => setIsProposing(!isProposing)}
-            className="inline-flex items-center gap-1 px-3 py-1 text-xs font-black bg-[#FFD23F] text-[#0A0A0A] border-2 border-[#0A0A0A] shadow-[2px_2px_0px_0px_#0A0A0A] hover:bg-[#FFE066] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all"
+            className="inline-flex items-center gap-1 text-xs font-bold text-[#0A0A0A] bg-[#06D6A0] hover:bg-[#06D6A0]/80 px-2.5 py-1 rounded-lg border-2 border-[#0A0A0A] shadow-[1px_1px_0_#0A0A0A] transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
-            태그 제안
+            <span>새 태그 제안</span>
           </button>
         </div>
       </div>
 
-      {/* Propose Tag Form */}
+      {/* 태그 제안 폼 */}
       {isProposing && (
-        <form onSubmit={handlePropose} className="mb-4 p-3 bg-white border-2 border-[#0A0A0A] shadow-[2px_2px_0px_0px_#0A0A0A]">
-          <div className="text-xs font-bold text-[#0A0A0A] mb-2">
-            💡 찾으시는 태그가 없나요? 새로운 태그를 제안해 보세요 (최대 10자).
-          </div>
-          <div className="flex gap-2">
+        <form onSubmit={handlePropose} className="p-3 bg-[#FAFAF5] border-2 border-[#0A0A0A] rounded-lg space-y-2">
+          <div className="flex items-center gap-2">
             <input
               type="text"
               value={newTagName}
               onChange={(e) => setNewTagName(e.target.value)}
-              maxLength={10}
               placeholder="제안할 태그 이름 (최대 10자)"
-              className="flex-1 px-3 py-1.5 text-xs font-bold border-2 border-[#0A0A0A] focus:outline-none focus:bg-[#FFE066]/20"
-              disabled={isSubmitting}
+              maxLength={10}
+              className="flex-1 px-3 py-1.5 text-xs bg-white border-2 border-[#0A0A0A] rounded-lg focus:outline-none"
             />
             <button
               type="submit"
               disabled={isSubmitting || !newTagName.trim()}
-              className="px-4 py-1.5 text-xs font-black bg-[#4ECDC4] text-[#0A0A0A] border-2 border-[#0A0A0A] shadow-[2px_2px_0px_0px_#0A0A0A] disabled:opacity-50 hover:bg-[#3db8af] transition-colors"
+              className="px-3 py-1.5 text-xs font-bold text-[#0A0A0A] bg-[#FFD23F] border-2 border-[#0A0A0A] rounded-lg disabled:opacity-50"
             >
-              {isSubmitting ? '접수 중...' : '제안하기'}
+              {isSubmitting ? '확인 중...' : '제안'}
             </button>
             <button
               type="button"
-              onClick={() => {
-                setIsProposing(false);
-                setNewTagName('');
-                setProposeMessage(null);
-              }}
-              className="px-2.5 py-1.5 text-xs font-bold bg-[#E8E4DD] text-[#0A0A0A] border-2 border-[#0A0A0A]"
+              onClick={() => setIsProposing(false)}
+              className="p-1.5 text-[#52525B] hover:text-[#0A0A0A]"
             >
-              취소
+              <X className="w-4 h-4" />
             </button>
           </div>
+          <p className="text-[11px] text-[#52525B] leading-tight">
+            * 제안된 태그는 무단 등록 방지를 위해 운영진 심사를 거쳐 등록됩니다.
+          </p>
           {proposeMessage && (
-            <div
-              className={`mt-2 text-xs font-bold p-2 border-2 border-[#0A0A0A] ${
-                proposeMessage.type === 'success'
-                  ? 'bg-[#4ECDC4]/20 text-[#0A0A0A]'
-                  : proposeMessage.type === 'info'
-                  ? 'bg-[#FFD23F]/20 text-[#0A0A0A]'
-                  : 'bg-[#FF6B6B]/20 text-[#FF6B6B]'
-              }`}
-            >
+            <p className="text-xs font-bold text-[#0A0A0A]">
               {proposeMessage.text}
-            </div>
+            </p>
           )}
         </form>
       )}
 
-      {/* Tag Pills List */}
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => onSelectTag(null)}
-          className={`px-3 py-1.5 text-xs font-black uppercase tracking-wider transition-all border-2 border-[#0A0A0A] ${
-            selectedTag === null
-              ? 'bg-[#0A0A0A] text-white shadow-[2px_2px_0px_0px_#FFD23F] translate-x-0.5 translate-y-0.5'
-              : 'bg-white text-[#0A0A0A] shadow-[2px_2px_0px_0px_#0A0A0A] hover:bg-[#FFE066] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none'
-          }`}
-        >
-          전체
-        </button>
-
+      {/* 원래 태그 알약 디자인 */}
+      <div className="flex flex-wrap items-center gap-1.5">
         {displayTags.map((tag) => {
           const isSelected = selectedTag === tag.name;
-
           return (
             <button
-              key={`${tag.id}-${tag.name}`}
+              key={tag.id}
               onClick={() => onSelectTag(isSelected ? null : tag.name)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold transition-all border-2 border-[#0A0A0A] ${
+              className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border-2 border-[#0A0A0A] font-bold transition-all ${
                 isSelected
-                  ? 'bg-[#FFD23F] text-[#0A0A0A] font-black shadow-[2px_2px_0px_0px_#0A0A0A] translate-x-0.5 translate-y-0.5'
-                  : 'bg-white text-[#0A0A0A] shadow-[2px_2px_0px_0px_#0A0A0A] hover:bg-[#FFE066] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none'
+                  ? 'bg-[#FF6B9E] text-[#0A0A0A] shadow-[2px_2px_0_#0A0A0A]'
+                  : 'bg-white text-[#0A0A0A] hover:bg-[#F1F0E8] shadow-[1px_1px_0_#0A0A0A]'
               }`}
             >
               <span>#{tag.name}</span>
+              {tag.recent_growth > 0 && tagSort === 'trending' && (
+                <span className="text-[10px] text-[#C81E4B] font-black">+{tag.recent_growth}</span>
+              )}
             </button>
           );
         })}
