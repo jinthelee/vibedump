@@ -597,40 +597,110 @@ export default function App() {
               onTagSortChange={setTagSort}
             />
 
-            {/* Popular Tag Clouds */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-4 border-t-2 border-[#0A0A0A]">
-              {(() => {
-                const baseList = (tags && tags.length > 0 ? tags : DEFAULT_FALLBACK_TAGS);
-                const tagListWithLiveCounts = baseList.map((t) => {
-                  const liveCount = services.filter((s) => Array.isArray(s.tags) && s.tags.includes(t.name)).length;
-                  const countVal = Math.max(Number(t.service_count ?? (t as any).count ?? 0), liveCount);
-                  return { ...t, service_count: countVal };
-                });
+{/* Popular Tag Clouds: 개수 0개 제외, 사용량 많은 순 상위 20개까지만 노출 */}
+            {(() => {
+              // 실제로 등록된 서비스들로부터 실시간 태그 사용량 계산
+              const liveTagCounts = new Map<string, number>();
+              (services || []).forEach((s) => {
+                if (Array.isArray(s.tags)) {
+                  s.tags.forEach((raw) => {
+                    const name = String(raw).trim();
+                    if (name) {
+                      liveTagCounts.set(name, (liveTagCounts.get(name) || 0) + 1);
+                    }
+                  });
+                }
+              });
 
-                // Sort by count descending so tags with services appear first!
-                tagListWithLiveCounts.sort((a, b) => b.service_count - a.service_count || a.name.localeCompare(b.name, 'ko'));
+              // 0개인 태그 및 삭제/병합된 태그는 제외하고 실사용 태그만 수집
+              const tagMap = new Map<string, { id: number | string; name: string; service_count: number }>();
 
-                return tagListWithLiveCounts.map((t) => (
-                  <div
-                    key={t.id}
-                    onClick={() => {
-                      setSelectedTag(t.name);
-                      setActiveTab('discover');
-                    }}
-                    className="p-3 bg-white border-2 border-[#0A0A0A] rounded-xl shadow-[3px_3px_0_#0A0A0A] hover:bg-[#FFD23F] transition-all cursor-pointer flex items-center justify-between"
-                  >
-                    <span className="font-bold text-xs text-[#0A0A0A]">#{t.name}</span>
-                    <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded border border-[#0A0A0A] transition-colors ${
-                      t.service_count > 0 ? 'bg-[#FFD23F] text-[#0A0A0A]' : 'bg-[#F1F0E8] text-[#52525B]'
-                    }`}>
-                      {t.service_count}개
-                    </span>
+              (tags || []).forEach((t) => {
+                const live = liveTagCounts.get(t.name) || 0;
+                const effectiveCount = live > 0 ? live : Number(t.service_count ?? (t as any).count ?? 0);
+                if (effectiveCount > 0) {
+                  tagMap.set(t.name, {
+                    id: t.id,
+                    name: t.name,
+                    service_count: effectiveCount,
+                  });
+                }
+              });
+
+              // 현재 서비스에 달려있는 태그도 즉시 포함
+              liveTagCounts.forEach((count, name) => {
+                if (count > 0 && !tagMap.has(name)) {
+                  tagMap.set(name, {
+                    id: name,
+                    name,
+                    service_count: count,
+                  });
+                }
+              });
+
+              // 개수 많은 순 정렬 후 상위 20개까지만 추출 (20개 미만이어도 있는 만큼만 노출)
+              const topTags = Array.from(tagMap.values())
+                .sort((a, b) => b.service_count - a.service_count || a.name.localeCompare(b.name, 'ko'))
+                .slice(0, 20);
+
+              if (topTags.length === 0) {
+                return (
+                  <div className="pt-6 pb-2 border-t-2 border-[#0A0A0A] text-center">
+                    <p className="text-xs font-bold text-[#52525B]">
+                      아직 등록된 서비스 태그가 없습니다.
+                    </p>
                   </div>
-                ));
-              })()}
-            </div>
-          </div>
-        )}
+                );
+              }
+
+              return (
+                <div className="space-y-3 pt-5 border-t-2 border-[#0A0A0A]">
+                  <div className="flex items-center justify-between text-xs font-bold text-[#52525B]">
+                    <span className="flex items-center gap-1.5 text-[#0A0A0A]">
+                      <span className="px-1.5 py-0.5 bg-[#FFD23F] border border-[#0A0A0A] rounded text-[10px] font-black">
+                        TOP 20
+                      </span>
+                      <span>인기 태그 랭킹 (총 {topTags.length}개)</span>
+                    </span>
+                    <span className="text-[11px] text-[#52525B]">사용량 많은 순</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {topTags.map((t, idx) => (
+                      <div
+                        key={t.id}
+                        onClick={() => {
+                          setSelectedTag(t.name);
+                          setActiveTab('discover');
+                        }}
+                        className="p-3 bg-white border-2 border-[#0A0A0A] rounded-xl shadow-[3px_3px_0_#0A0A0A] hover:bg-[#FFD23F] transition-all cursor-pointer flex items-center justify-between group"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {/* 1, 2, 3위 순위 뱃지 */}
+                          <span className={`w-5 h-5 rounded-full flex items-center justify-center font-mono text-[10px] font-black shrink-0 border border-[#0A0A0A] ${
+                            idx === 0
+                              ? 'bg-[#FFD23F] text-[#0A0A0A]'
+                              : idx === 1
+                              ? 'bg-[#E5E5E5] text-[#0A0A0A]'
+                              : idx === 2
+                              ? 'bg-[#E0A96D] text-white'
+                              : 'bg-white text-[#52525B]'
+                          }`}>
+                            {idx + 1}
+                          </span>
+                          <span className="font-bold text-xs text-[#0A0A0A] truncate">
+                            #{t.name}
+                          </span>
+                        </div>
+                        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded border border-[#0A0A0A] bg-[#FFD23F] text-[#0A0A0A] shrink-0">
+                          {t.service_count}개
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
         {/* Tab 4: Favorites Grid (Requirement 3: 찜한 사이트) */}
         {activeTab === 'favorites' && (
