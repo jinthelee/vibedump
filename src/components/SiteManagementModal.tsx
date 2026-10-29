@@ -58,7 +58,6 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
   // Window controls & Dragging (Requirement 2)
   const [isMinimized, setIsMinimized] = useState(false);
   const [isTransparent, setIsTransparent] = useState(false);
-  const [isPeeking, setIsPeeking] = useState(false);
   const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -258,6 +257,10 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
   const handleAddMakerTag = (tagToAdd?: string) => {
     const clean = (tagToAdd || makerTagInput).trim().replace(/^#/, '');
     if (!clean) return;
+    if (clean.length > 10) {
+      setMakerError('태그는 최대 10자까지만 등록 가능합니다.');
+      return;
+    }
     if (makerTags.includes(clean)) {
       setMakerTagInput('');
       return;
@@ -986,9 +989,7 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
       isTransparent ? 'bg-transparent pointer-events-none' : 'bg-black/60'
     }`}>
       <div className={`relative w-full max-w-4xl rounded-xl border-2 border-[#0A0A0A] overflow-hidden my-6 max-h-[92vh] flex flex-col pointer-events-auto transition-opacity duration-150 ${
-        isPeeking
-          ? 'opacity-0 pointer-events-none'
-          : isTransparent
+        isTransparent
           ? 'opacity-40 bg-[#FAFAF5]/85 shadow-2xl border-dashed border-amber-600'
           : 'opacity-100 bg-[#FAFAF5] shadow-[8px_8px_0_#0A0A0A]'
       }`}>
@@ -1017,19 +1018,6 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onMouseDown={() => setIsPeeking(true)}
-              onMouseUp={() => setIsPeeking(false)}
-              onMouseLeave={() => setIsPeeking(false)}
-              onTouchStart={() => setIsPeeking(true)}
-              onTouchEnd={() => setIsPeeking(false)}
-              className="px-2.5 py-1 bg-white hover:bg-neutral-100 border border-[#0A0A0A] rounded text-xs font-bold flex items-center gap-1 shadow-[1px_1px_0_#0A0A0A] active:scale-95 transition-transform select-none cursor-pointer"
-              title="마우스로 누르고 있는 동안 창이 완전히 사라져 뒤 실제 사이트 화면을 100% 봅니다"
-            >
-              <Eye className="w-3.5 h-3.5 text-amber-600" />
-              <span>꾹 눌러 뒤 보기</span>
-            </button>
             <button
               type="button"
               onClick={() => setIsTransparent(!isTransparent)}
