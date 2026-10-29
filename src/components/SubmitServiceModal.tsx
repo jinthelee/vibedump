@@ -385,7 +385,7 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                 </div>
               )}
 
-              {/* Requirement 3: Promo banner updated to '현재 운영하지 않습니다.' */}
+              {/* Promo banner: sponsor guide */}
               <div className="p-3.5 bg-[#FFF3C4] border-2 border-[#0A0A0A] rounded-xl flex items-center justify-between gap-3 text-xs shadow-[2px_2px_0_#0A0A0A]">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-1.5 font-bold text-[#0A0A0A]">
@@ -395,7 +395,7 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                     <span>유료 추천 노출 및 스폰서 배지 안내</span>
                   </div>
                   <p className="text-[11px] text-[#52525B] font-medium leading-relaxed">
-                    현재 운영하지 않습니다.
+                    무료 서버가 못 버티겠다고 할 때 생각해 보겠습니다.
                   </p>
                 </div>
               </div>
