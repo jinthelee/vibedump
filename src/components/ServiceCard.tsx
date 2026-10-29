@@ -127,7 +127,7 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
 
           {/* Tags Chips */}
           <div className="flex items-center gap-1.5 flex-wrap pt-1">
-            {(Array.isArray(service.tags) ? service.tags : []).slice(0, 3).map((tag) => (
+            {service.tags.slice(0, 3).map((tag) => (
               <span
                 key={tag}
                 className="text-[11px] font-bold text-[#0A0A0A] bg-[#F1F0E8] px-2 py-0.5 rounded border border-[#0A0A0A]"
@@ -136,6 +136,7 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
               </span>
             ))}
           </div>
+        </div>
 
         {/* Card Footer: Metrics & Actions */}
         <div className="pt-3 border-t-2 border-[#0A0A0A] flex items-center justify-between gap-2 text-xs font-bold text-[#0A0A0A]">
