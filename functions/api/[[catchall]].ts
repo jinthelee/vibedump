@@ -670,7 +670,22 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         WHERE f.client_token = ? AND s.status = 'approved'
         ORDER BY s.name COLLATE NOCASE ASC
       `).bind(client_token).all();
-      return json({ favorites: res.results || [] });
+
+      const favList = res.results || [];
+      for (const s of favList) {
+        try {
+          const tagsRes = await db.prepare(`
+            SELECT t.name FROM tags t
+            JOIN service_tags st ON t.id = st.tag_id
+            WHERE st.service_id = ?
+          `).bind(s.id).all();
+          s.tags = (tagsRes.results || []).map((r: any) => r.name);
+        } catch {
+          s.tags = [];
+        }
+      }
+
+      return json({ favorites: favList });
     } catch {
       return json({ favorites: [] });
     }
