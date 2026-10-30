@@ -147,75 +147,81 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
               <div>
                 <h3 className="font-display text-lg text-[#0A0A0A]">바이브덤프 개인정보처리방침</h3>
                 <p className="text-[11px] text-[#52525B] font-mono mt-0.5">
-                  시행일: 2026년 10월 21일
+                  최종 개정일: 2026년 10월 30일
                 </p>
               </div>
 
               <div className="space-y-3 font-medium text-[#52525B]">
-                <p>
-                  바이브덤프(VibeDump)는 이용자의 개인정보를 보호하고 관련 법령을 준수합니다.
-                </p>
+                <div className="p-3 bg-[#FAFAF5] border-2 border-[#0A0A0A] rounded-xl text-xs space-y-1">
+                  <p className="font-bold text-[#0A0A0A]">
+                    🛡️ [개인정보 최소 수집 원칙]
+                  </p>
+                  <p className="leading-relaxed">
+                    바이브덤프(VibeDump)는 회원가입 없이 누구나 자유롭게 탐색하고 창작물을 공유할 수 있는 오픈 플랫폼입니다.
+                    이용자의 민감한 개인정보를 일절 요구하지 않으며, 서비스 운영상 불가피한 최소한의 정보만을 처리합니다.
+                  </p>
+                </div>
 
                 <div>
-                  <h4 className="font-bold text-xs text-[#0A0A0A]">1. 개인정보의 수집 및 이용 목적</h4>
-                  <p>운영자는 다음 목적을 위해 필요한 정보를 처리합니다.</p>
-                  <ul className="list-disc pl-4 space-y-0.5 mt-1">
-                    <li>프로젝트 등록 및 수정·관리</li>
-                    <li>권리침해 신고 및 문의 처리</li>
-                    <li>서비스 운영 및 오류 대응</li>
-                    <li>부정 이용 방지</li>
+                  <h4 className="font-bold text-xs text-[#0A0A0A]">1. 공개 콘텐츠와 개인정보의 구분</h4>
+                  <ul className="list-disc pl-4 space-y-1 mt-1">
+                    <li>
+                      <strong>공개 콘텐츠 (개인정보 아님):</strong> 서비스 등록 시 입력하는 사이트명, 한 줄 소개, 상세 설명, 접속 주소(URL), 썸네일/스크린샷 이미지, 카테고리, 태그, 제작자 공개 활동명(닉네임) 등은 사이트 공개 홍보를 위한 게시물로서 개인정보에 해당하지 않으며, 방문자에게 전체 공개됩니다.
+                    </li>
+                    <li>
+                      <strong>개인정보:</strong> 아래 제2조에 명시된 비공개 연락처 및 접속 로그에 한해 개인정보로 취급하여 안전하게 보호합니다.
+                    </li>
                   </ul>
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-xs text-[#0A0A0A]">2. 처리하는 개인정보 항목</h4>
-                  <p>서비스 이용 과정에서 다음 정보가 처리될 수 있습니다.</p>
-                  <ul className="list-disc pl-4 space-y-0.5 mt-1">
-                    <li><strong>프로젝트 등록 정보:</strong> 프로젝트명, 설명, 웹사이트 주소, 카테고리 및 태그 등</li>
-                    <li><strong>신고 및 문의 정보:</strong> 이메일 주소, 신고 내용, 관련 URL 및 첨부 자료 등</li>
-                    <li><strong>서비스 이용 정보:</strong> 접속 기록, 오류 기록, 쿠키 또는 브라우저 저장소 정보 등 실제 수집되는 정보</li>
+                  <h4 className="font-bold text-xs text-[#0A0A0A]">2. 처리하는 개인정보 항목 및 수집 목적</h4>
+                  <p>바이브덤프가 수집·처리하는 유일한 개인정보 항목은 다음과 같습니다.</p>
+                  <ul className="list-disc pl-4 space-y-1.5 mt-1">
+                    <li>
+                      <strong>[선택] 서비스 등록 시 제작자 연락처 (이메일, SNS 등):</strong> 사이트 권리 관계 확인, 긴급 공지 또는 제작자 문의 전달용 (공개 프로필에 일절 노출되지 않으며 비공개 보관됩니다).
+                    </li>
+                    <li>
+                      <strong>[선택] 권리침해 신고 및 이용 문의 접수 시 이메일:</strong> 신고/문의 내용 확인, 사실관계 검토 및 처리 결과 회신.
+                    </li>
+                    <li>
+                      <strong>[자동 수집] 웹 서버 접속 로그:</strong> 비정상 트래픽 및 악성코드 유포 방지, 보안 침해 사고 대응을 위한 IP 주소, 접속 일시, User-Agent (브라우저/OS 정보).
+                    </li>
                   </ul>
                 </div>
 
                 <div>
                   <h4 className="font-bold text-xs text-[#0A0A0A]">3. 개인정보의 보유 및 이용 기간</h4>
                   <p>
-                    개인정보는 처리 목적이 달성되면 지체 없이 파기합니다. 다만, 관련 법령에 따라 보관해야 하는 정보는 해당 법령에서 정한 기간 동안 보관합니다. 구체적인 보유 기간은 실제 운영 방식에 따라 정하며, 이용자가 확인할 수 있도록 필요한 사항을 공개합니다.
+                    수집된 정보는 처리 목적 달성 시 지체 없이 파기하는 것을 원칙으로 합니다.
                   </p>
+                  <ul className="list-disc pl-4 space-y-1 mt-1">
+                    <li><strong>제작자 연락처:</strong> 해당 서비스 게시 철회 및 영구 삭제 시 즉시 파기</li>
+                    <li><strong>신고 및 문의 내역:</strong> 처리 완료 및 분쟁 예방을 위해 3개월 보관 후 지체 없이 파기</li>
+                    <li><strong>웹 접속 로그:</strong> 통신비밀보호법 등 관련 법령에 따라 보안 목적으로 최대 3개월 보관 후 자동 폐기</li>
+                  </ul>
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-xs text-[#0A0A0A]">4. 개인정보의 제3자 제공 및 처리 위탁</h4>
+                  <h4 className="font-bold text-xs text-[#0A0A0A]">4. 개인정보의 제3자 제공 및 위탁</h4>
                   <p>
-                    운영자는 원칙적으로 개인정보를 제3자에게 제공하지 않습니다. 외부 업체에 개인정보 처리 업무를 위탁하거나 개인정보를 국외로 이전하는 경우에는 실제 이용 현황과 관련 법령에 따라 필요한 사항을 공개합니다.
+                    운영자는 이용자의 개인정보를 외부에 제공하거나 판매하지 않습니다. 서비스 호스팅 및 인프라 보안 유지를 위해 글로벌 클라우드 인프라(Cloudflare)를 이용하며, 인프라 제공사는 엄격한 글로벌 보안 표준을 준수합니다.
                   </p>
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-xs text-[#0A0A0A]">5. 개인정보의 파기 및 보호</h4>
+                  <h4 className="font-bold text-xs text-[#0A0A0A]">5. 개인정보의 파기 및 이용자의 권리</h4>
                   <p>
-                    운영자는 보유 기간이 경과하거나 처리 목적이 달성된 개인정보를 지체 없이 파기하며, 개인정보의 안전한 관리를 위해 필요한 보호 조치를 시행합니다.
+                    이용자는 언제든지 자신이 등록한 사이트의 게시 철회 또는 연락처 삭제를 요청할 수 있습니다. 등록 시 발급된 사이트 관리 코드를 통해 [사이트 관리] 메뉴에서 직접 수정/삭제할 수 있으며, 이메일을 통해서도 즉시 삭제 요청이 가능합니다.
                   </p>
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-xs text-[#0A0A0A]">6. 이용자의 권리</h4>
-                  <p>
-                    이용자는 자신의 개인정보에 대한 열람, 정정, 삭제 또는 처리정지를 요청할 수 있습니다. 관련 요청은 아래 문의처로 접수할 수 있습니다.
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="font-bold text-xs text-[#0A0A0A]">7. 개인정보 관련 문의</h4>
+                  <h4 className="font-bold text-xs text-[#0A0A0A]">6. 개인정보 보호책임자 및 문의처</h4>
                   <p className="mt-1">
-                    운영자: 바이브덤프<br />
-                    이메일: <a href="mailto:info.vibedump@gmail.com" className="text-[#1F5FD1] hover:underline font-mono">info.vibedump@gmail.com</a>
+                    운영 주체: 바이브덤프 운영팀<br />
+                    이메일 문의: <a href="mailto:info.vibedump@gmail.com" className="text-[#1F5FD1] hover:underline font-mono">info.vibedump@gmail.com</a>
                   </p>
-                </div>
-
-                <div>
-                  <h4 className="font-bold text-xs text-[#0A0A0A]">8. 방침의 변경</h4>
-                  <p>개인정보처리방침이 변경되는 경우 서비스 내에 변경 사항과 시행일을 게시합니다.</p>
                 </div>
               </div>
             </div>
