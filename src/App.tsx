@@ -113,17 +113,19 @@ export default function App() {
         };
       });
 
-      // Pin sponsored cards to the top according to admin display order!
-      processed.sort((a, b) => {
-        const aSpon = Boolean(a.is_sponsored);
-        const bSpon = Boolean(b.is_sponsored);
-        if (aSpon && !bSpon) return -1;
-        if (!aSpon && bSpon) return 1;
-        if (aSpon && bSpon) {
-          return (a as any).sponsor_order - (b as any).sponsor_order;
-        }
-        return 0;
-      });
+      // Only pin sponsored cards if showAds is explicitly enabled
+      if (showAds) {
+        processed.sort((a, b) => {
+          const aSpon = Boolean(a.is_sponsored);
+          const bSpon = Boolean(b.is_sponsored);
+          if (aSpon && !bSpon) return -1;
+          if (!aSpon && bSpon) return 1;
+          if (aSpon && bSpon) {
+            return ((a as any).sponsor_order ?? 0) - ((b as any).sponsor_order ?? 0);
+          }
+          return 0;
+        });
+      }
 
       setServices(processed);
     } catch (err) {
@@ -131,7 +133,7 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedCategory, selectedTag, searchQuery, sortOption, promotions]);
+  }, [selectedCategory, selectedTag, searchQuery, sortOption, promotions, showAds]);
 
   // Load metadata (categories, tags, curations, promotions, favorites, settings, community)
   const loadMetadata = useCallback(async () => {
@@ -168,7 +170,14 @@ export default function App() {
       // 최신 스폰서 설정으로 피드 카드 목록도 즉시 동기화
       loadServices(loadedPromos);
 
-      const sortedFavs = (favRes.favorites || []).slice().sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+      const rawFavs = favRes.favorites || [];
+      const sortedFavs = rawFavs
+        .filter((s) => s && s.id)
+        .map((s) => ({
+          ...s,
+          tags: Array.isArray(s.tags) ? s.tags : [],
+        }))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
       setFavoritesList(sortedFavs);
       setFavoritesIds(new Set(sortedFavs.map((f) => f.id)));
       if (setRes.settings?.slogan) {
@@ -213,19 +222,18 @@ export default function App() {
       const baseTags = (prevTags && prevTags.length > 0) ? [...prevTags] : [...DEFAULT_FALLBACK_TAGS];
       const existingNames = new Set(baseTags.map((t) => t.name));
 
-      // 1. Update counts of existing tags
+      // 1. Update counts of existing tags with actual live counts
       const updated = baseTags.map((t) => {
         const live = liveTagMap.get(t.name) || 0;
-        const current = Number(t.service_count ?? (t as any).count ?? 0);
         return {
           ...t,
-          service_count: Math.max(current, live),
+          service_count: live,
         };
       });
 
-      // 2. Add any NEW tags from registered services
+      // 2. Add any NEW tags from registered services if count > 0
       liveTagMap.forEach((count, name) => {
-        if (!existingNames.has(name)) {
+        if (!existingNames.has(name) && count > 0) {
           updated.push({
             id: Date.now() + Math.floor(Math.random() * 1000),
             name,
@@ -265,14 +273,27 @@ export default function App() {
     });
     fetchFavorites()
       .then((res) => {
-        const sorted = (res.favorites || []).slice().sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-        setFavoritesList(sorted);
+        const raw = res.favorites || [];
+        const normalized = raw
+          .filter((s) => s && s.id)
+          .map((s) => ({
+            ...s,
+            tags: Array.isArray(s.tags) ? s.tags : [],
+          }))
+          .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
+        setFavoritesList(normalized);
       })
       .catch(() => {});
   };
 
   const sortedFavorites: Service[] = useMemo(() => {
-    return [...favoritesList].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+    return (favoritesList || [])
+      .filter((s) => s && s.id)
+      .map((s) => ({
+        ...s,
+        tags: Array.isArray(s.tags) ? s.tags : [],
+      }))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
   }, [favoritesList]);
 
   const totalRegisteredCount = categories.reduce((sum, c) => sum + c.count, 0);
@@ -533,7 +554,7 @@ export default function App() {
                       <Megaphone className="w-8 h-8 text-[#52525B] mx-auto opacity-50" />
                       <p className="text-xs font-bold text-[#0A0A0A]">아직 등록된 수기 제작자 공지가 없습니다.</p>
                       <p className="text-[11px] text-[#52525B]">
-                        제작자 스튜디오(사이트 관리 &gt; 제작자 영역)에서 내 사이트의 첫 공지를 직접 작성해보세요!
+                        [사이트 관리] 메뉴에서 사이트 관리 코드로 인증 후 내 사이트의 첫 공지를 직접 작성해보세요!
                       </p>
                     </div>
                   ) : (
