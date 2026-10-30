@@ -250,7 +250,7 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
       setMakerEmail(res.service.maker_email || '');
       setMakerTags(Array.isArray(res.service.tags) ? [...res.service.tags] : []);
     } catch (err: any) {
-      setMakerError(err.message || '관리 코드가 올바르지 않아요.');
+      setMakerError(err.message || '사이트 관리 코드가 올바르지 않습니다.');
     }
   };
 
@@ -1062,9 +1062,9 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
             !makerAuth ? (
               <form onSubmit={handleMakerVerify} className="max-w-md mx-auto py-8 space-y-4">
                 <div className="text-center space-y-1 mb-4">
-                  <h3 className="font-display text-xl text-[#0A0A0A]">등록 사이트 관리</h3>
+                  <h3 className="font-display text-xl text-[#0A0A0A]">사이트 관리</h3>
                   <p className="text-xs text-[#52525B]">
-                    서비스 등록 시 발급받은 사이트 ID와 관리 코드를 입력하세요.
+                    사이트 등록 시 발급받은 사이트 ID와 사이트 관리 코드를 입력하세요.
                   </p>
                 </div>
 
@@ -1098,7 +1098,7 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
                     className="w-full px-3 py-2 text-xs font-mono bg-white border-2 border-[#0A0A0A] rounded-lg focus:outline-none"
                   />
                   <p className="text-[11px] text-[#52525B]">
-                    * 사이트 등록 완료 시 발급받은 비밀 관리 코드를 입력하세요.
+                    * 사이트 등록 완료 시 발급받은 사이트 관리 코드를 입력하세요.
                   </p>
                 </div>
 
