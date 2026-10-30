@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Check, Copy, AlertCircle, Sparkles, Mail, ExternalLink, Plus, RotateCcw } from 'lucide-react';
-import { createService } from '../lib/api';
+import { X, Check, Copy, AlertCircle, Sparkles, Mail, ExternalLink, Plus, RotateCcw, HelpCircle } from 'lucide-react';
+import { createService, getImagePosition, cleanImageUrl } from '../lib/api';
 import { VALID_CATEGORIES } from '../types';
 
 interface SubmitServiceModalProps {
@@ -11,10 +11,15 @@ interface SubmitServiceModalProps {
 
 const DRAFT_STORAGE_KEY = 'vibedump_service_submit_draft';
 
+// Operator requested 14 base priority tags
+const PRESET_BASE_TAGS = [
+  '웹앱', '웹게임', '글쓰기', '기록', '대시보드', '디자인', '템플릿',
+  '메모', '분석', '생산성', 'AI챗', '시각화', '자동화', '협업'
+];
+
 // Rich dictionary for auto-complete tag suggestions (prioritizing operator requested 14 tags)
 const POPULAR_TAG_SUGGESTIONS = [
-  '웹앱', '웹게임', '글쓰기', '기록', '대시보드', '디자인', '템플릿',
-  '메모', '분석', '생산성', 'AI챗', '시각화', '자동화', '협업',
+  ...PRESET_BASE_TAGS,
   'AI', '챗봇', '생성', '프로토타입', '게임', '사주타로', '운세',
   '밈', '짤방', '덕질', '소셜', '커뮤니티', '유틸리티'
 ];
@@ -32,7 +37,7 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
   const [customCategoryInput, setCustomCategoryInput] = useState<string>('');
 
   const [tagInput, setTagInput] = useState('');
-  const [tags, setTags] = useState<string[]>(['웹앱', '생산성']);
+  const [tags, setTags] = useState<string[]>([]);
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [screenshotUrl, setScreenshotUrl] = useState('');
   const [makerName, setMakerName] = useState('');
@@ -44,6 +49,7 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
   const [copiedCode, setCopiedCode] = useState(false);
   const [hasRestoredDraft, setHasRestoredDraft] = useState(false);
   const [draftSavedNotice, setDraftSavedNotice] = useState(false);
+  const [showExample, setShowExample] = useState(false);
 
   // Requirement 4: Load draft from localStorage on mount
   useEffect(() => {
@@ -169,6 +175,10 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
   const handleAddTag = (tagToAdd?: string) => {
     const clean = (tagToAdd || tagInput).trim().replace(/^#/, '');
     if (!clean) return;
+    if (clean.length > 10) {
+      setErrorMessage('태그는 최대 10자까지만 입력 가능합니다.');
+      return;
+    }
     if (tags.includes(clean)) {
       setTagInput('');
       return;
@@ -265,12 +275,23 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
               SUBMIT SERVICE
             </span>
           </div>
-          <button
-            onClick={handleSafeClose}
-            className="p-1.5 bg-white border border-[#0A0A0A] rounded text-[#0A0A0A] hover:bg-[#F1F0E8] transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowExample(true)}
+              className="px-2.5 py-1 text-xs font-bold bg-[#FFD23F] hover:bg-[#FFE066] text-[#0A0A0A] border-2 border-[#0A0A0A] rounded-lg shadow-[1px_1px_0_#0A0A0A] active:translate-x-0.5 active:translate-y-0.5 transition-all flex items-center gap-1 cursor-pointer"
+              title="어떻게 작성해야 할지 감이 안 올 때 참고할 수 있는 등록 예시 팝업을 엽니다 (입력 중인 내용은 그대로 유지됩니다)"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+              <span>예시 보기</span>
+            </button>
+            <button
+              onClick={handleSafeClose}
+              className="p-1.5 bg-white border border-[#0A0A0A] rounded text-[#0A0A0A] hover:bg-[#F1F0E8] transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -291,7 +312,7 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                       사이트가 심사 대기 중입니다!
                     </h3>
                     <p className="text-xs text-[#52525B] max-w-md mx-auto leading-relaxed">
-                      아래 발급된 <strong>제작자 관리 코드</strong>는 사이트 수정, 삭제 및 공지 작성에 필요하므로 반드시 복사해 안전하게 보관하세요.
+                      아래 발급된 <strong>사이트 관리 코드</strong>는 [사이트 관리] 메뉴에서 사이트 수정, 삭제 및 공지 작성에 필요하므로 반드시 복사해 안전하게 보관하세요.
                     </p>
                   </>
                 ) : (
@@ -303,17 +324,17 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                       사이트가 등록되었습니다!
                     </h3>
                     <p className="text-xs text-[#52525B] max-w-md mx-auto leading-relaxed">
-                      바이브덤프 둘러보기 피드에 즉시 공개되었습니다. 아래 발급된 <strong>제작자 관리 코드</strong>는 사이트 수정, 삭제 및 공지 작성에 필요하므로 반드시 복사해 안전하게 보관하세요.
+                      바이브덤프 둘러보기 피드에 즉시 공개되었습니다. 아래 발급된 <strong>사이트 관리 코드</strong>는 [사이트 관리] 메뉴에서 사이트 수정, 삭제 및 공지 작성에 필요하므로 반드시 복사해 안전하게 보관하세요.
                     </p>
                   </>
                 )}
               </div>
 
-              {/* Secure Maker Access Code Card */}
+              {/* Secure Site Management Code Card */}
               <div className="max-w-md mx-auto p-4 bg-[#FFF3C4] border-2 border-[#0A0A0A] rounded-xl text-left space-y-2 shadow-[3px_3px_0_#0A0A0A]">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-[#0A0A0A] flex items-center gap-1.5">
-                    🔑 제작자 관리 코드 (Maker Access Code)
+                    🔑 사이트 관리 코드
                   </span>
                   <span className="text-[10px] bg-[#C81E4B] text-white px-1.5 py-0.5 rounded font-black">
                     재발급 불가
@@ -346,7 +367,7 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                 </div>
 
                 <p className="text-[11px] text-[#52525B]">
-                  * 사이트 관리(설명/카테고리 수정, 게재 철회, 공지 작성) 시 이 코드를 입력하여 본인임을 인증합니다.
+                  * [사이트 관리] 메뉴에서 사이트 수정, 삭제, 공지 작성 시 이 코드를 입력하여 인증합니다.
                 </p>
               </div>
 
@@ -493,7 +514,8 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                           handleAddTag();
                         }
                       }}
-                      placeholder="단어를 입력하면 자동완성 추천 태그가 표시됩니다"
+                      maxLength={10}
+                      placeholder="태그 입력 (최대 10자, 엔터로 추가)"
                       className="flex-1 px-3 py-2 text-xs bg-white border-2 border-[#0A0A0A] rounded-lg focus:outline-none"
                     />
                     <button
@@ -525,22 +547,66 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                 </div>
 
                 {/* Selected tag chips */}
-                <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                  {tags.map((t) => (
-                    <span
-                      key={t}
-                      className="inline-flex items-center gap-1 bg-[#FAFAF5] border-2 border-[#0A0A0A] px-2.5 py-1 rounded text-xs font-bold shadow-[1px_1px_0_#0A0A0A]"
-                    >
-                      <span>#{t}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveTag(t)}
-                        className="text-[#52525B] hover:text-[#C81E4B]"
-                      >
-                        ×
-                      </button>
+                <div className="flex items-center gap-1.5 flex-wrap pt-1 min-h-[30px]">
+                  {tags.length === 0 ? (
+                    <span className="text-[11px] text-[#52525B] italic">
+                      아직 추가된 태그가 없습니다. 아래 기본 분류를 클릭하거나 직접 입력해주세요.
                     </span>
-                  ))}
+                  ) : (
+                    tags.map((t) => (
+                      <span
+                        key={t}
+                        className="inline-flex items-center gap-1 bg-[#FFD23F] border-2 border-[#0A0A0A] px-2.5 py-1 rounded text-xs font-black shadow-[1px_1px_0_#0A0A0A]"
+                      >
+                        <span>#{t}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTag(t)}
+                          className="text-[#0A0A0A] hover:text-[#C81E4B] font-black ml-0.5"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))
+                  )}
+                </div>
+
+                {/* Clickable base tag presets */}
+                <div className="pt-2 space-y-1.5 bg-[#F8F7F2] p-2.5 rounded-lg border border-[#0A0A0A]/30">
+                  <div className="text-[11px] font-bold text-[#0A0A0A] flex items-center justify-between">
+                    <span>💡 기본 분류 태그 (클릭하여 선택/해제):</span>
+                    <span className="font-mono text-[10px] text-[#52525B]">선택 {tags.length}/5</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {PRESET_BASE_TAGS.map((pt) => {
+                      const isSelected = tags.includes(pt);
+                      return (
+                        <button
+                          key={pt}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              handleRemoveTag(pt);
+                            } else {
+                              if (tags.length >= 5) {
+                                setErrorMessage('주요 기능 태그는 최대 5개까지만 등록 가능합니다.');
+                                return;
+                              }
+                              setTags([...tags, pt]);
+                              setErrorMessage(null);
+                            }
+                          }}
+                          className={`px-2 py-1 text-xs rounded-md border-2 border-[#0A0A0A] font-bold transition-all shadow-[1px_1px_0_#0A0A0A] active:translate-x-0.5 active:translate-y-0.5 ${
+                            isSelected
+                              ? 'bg-[#FFD23F] text-[#0A0A0A] font-black'
+                              : 'bg-white text-[#52525B] hover:text-[#0A0A0A] hover:bg-[#FFF3C4]'
+                          }`}
+                        >
+                          {isSelected ? `✓ #${pt}` : `+ #${pt}`}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -573,11 +639,12 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                 />
               </div>
 
-              {/* Image URLs (Compact 16:10 Preview, No Presets) */}
+              {/* Image URLs with live crop focal point selector */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-[#0A0A0A]">
-                    대표 썸네일 이미지 URL (선택)
+                  <label className="text-xs font-bold text-[#0A0A0A] flex items-center justify-between">
+                    <span>대표 썸네일 이미지 URL (선택)</span>
+                    <span className="text-[10px] text-[#52525B]">16:10 카드 비율</span>
                   </label>
                   <input
                     type="url"
@@ -587,29 +654,63 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                     className="w-full px-3 py-2 text-xs bg-white border-2 border-[#0A0A0A] rounded-lg focus:outline-none"
                   />
                   {thumbnailUrl && (
-                    <div className="mt-1.5 flex items-center gap-2.5 p-2 bg-[#FAFAF5] border border-[#0A0A0A] rounded-lg">
-                      <div className="w-24 sm:w-28 aspect-[16/10] rounded overflow-hidden border border-[#0A0A0A] bg-[#F1F0E8] shrink-0 shadow-[1px_1px_0_#0A0A0A]">
-                        <img
-                          src={thumbnailUrl}
-                          alt="썸네일 미리보기"
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = 'none';
-                          }}
-                        />
+                    <div className="mt-1.5 p-2.5 bg-[#FAFAF5] border-2 border-[#0A0A0A] rounded-lg space-y-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-24 sm:w-28 aspect-[16/10] rounded overflow-hidden border border-[#0A0A0A] bg-[#F1F0E8] shrink-0 shadow-[1px_1px_0_#0A0A0A]">
+                          <img
+                            src={cleanImageUrl(thumbnailUrl)}
+                            alt="썸네일 미리보기"
+                            referrerPolicy="no-referrer"
+                            style={{ objectPosition: getImagePosition(thumbnailUrl) }}
+                            className="w-full h-full object-cover transition-all"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                        </div>
+                        <div className="text-[11px] text-[#52525B] flex-1">
+                          <span className="font-bold text-[#0A0A0A] block">✂️ 노출 크롭 기준</span>
+                          <span className="text-[10px]">웹사이트 캡처 시 헤더가 보이도록 상단 크롭을 추천합니다.</span>
+                        </div>
                       </div>
-                      <div className="text-[11px] text-[#52525B]">
-                        <span className="font-bold text-[#0A0A0A] block">카드 썸네일 미리보기</span>
-                        <span className="text-[10px]">16:10 카드 비율</span>
+
+                      <div className="flex items-center gap-1.5 pt-1 border-t border-neutral-200">
+                        <span className="text-[10px] font-bold text-[#0A0A0A] shrink-0">크롭 위치:</span>
+                        {[
+                          { id: 'top', label: '🔼 상단 (헤더)' },
+                          { id: 'center', label: '⏺️ 중앙' },
+                          { id: 'bottom', label: '🔽 하단' },
+                        ].map((pos) => {
+                          const currentPos = thumbnailUrl.includes('#pos=') ? (thumbnailUrl.match(/#pos=([a-z0-9%_-]+)/i)?.[1] || 'center') : 'center';
+                          const isActive = currentPos === pos.id;
+                          return (
+                            <button
+                              key={pos.id}
+                              type="button"
+                              onClick={() => {
+                                const clean = cleanImageUrl(thumbnailUrl).trim();
+                                if (!clean) return;
+                                setThumbnailUrl(pos.id === 'center' ? clean : `${clean}#pos=${pos.id}`);
+                              }}
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-all ${
+                                isActive
+                                  ? 'bg-[#FFD23F] border-[#0A0A0A] text-[#0A0A0A] shadow-[1px_1px_0_#0A0A0A]'
+                                  : 'bg-white border-neutral-300 text-[#52525B] hover:text-[#0A0A0A]'
+                              }`}
+                            >
+                              {pos.label}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-[#0A0A0A]">
-                    추가 스크린샷 이미지 URL (선택)
+                  <label className="text-xs font-bold text-[#0A0A0A] flex items-center justify-between">
+                    <span>추가 스크린샷 이미지 URL (선택)</span>
+                    <span className="text-[10px] text-[#52525B]">상세 모달 노출용</span>
                   </label>
                   <input
                     type="url"
@@ -619,21 +720,54 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                     className="w-full px-3 py-2 text-xs bg-white border-2 border-[#0A0A0A] rounded-lg focus:outline-none"
                   />
                   {screenshotUrl && (
-                    <div className="mt-1.5 flex items-center gap-2.5 p-2 bg-[#FAFAF5] border border-[#0A0A0A] rounded-lg">
-                      <div className="w-24 sm:w-28 aspect-[16/10] rounded overflow-hidden border border-[#0A0A0A] bg-[#F1F0E8] shrink-0 shadow-[1px_1px_0_#0A0A0A]">
-                        <img
-                          src={screenshotUrl}
-                          alt="스크린샷 미리보기"
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = 'none';
-                          }}
-                        />
+                    <div className="mt-1.5 p-2.5 bg-[#FAFAF5] border-2 border-[#0A0A0A] rounded-lg space-y-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-24 sm:w-28 aspect-[16/10] rounded overflow-hidden border border-[#0A0A0A] bg-[#F1F0E8] shrink-0 shadow-[1px_1px_0_#0A0A0A]">
+                          <img
+                            src={cleanImageUrl(screenshotUrl)}
+                            alt="스크린샷 미리보기"
+                            referrerPolicy="no-referrer"
+                            style={{ objectPosition: getImagePosition(screenshotUrl) }}
+                            className="w-full h-full object-cover transition-all"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                        </div>
+                        <div className="text-[11px] text-[#52525B] flex-1">
+                          <span className="font-bold text-[#0A0A0A] block">✂️ 노출 크롭 기준</span>
+                          <span className="text-[10px]">상세 모달에서 노출될 이미지의 초점을 맞춥니다.</span>
+                        </div>
                       </div>
-                      <div className="text-[11px] text-[#52525B]">
-                        <span className="font-bold text-[#0A0A0A] block">상세 스크린샷 미리보기</span>
-                        <span className="text-[10px]">상세 모달 노출용</span>
+
+                      <div className="flex items-center gap-1.5 pt-1 border-t border-neutral-200">
+                        <span className="text-[10px] font-bold text-[#0A0A0A] shrink-0">크롭 위치:</span>
+                        {[
+                          { id: 'top', label: '🔼 상단 (헤더)' },
+                          { id: 'center', label: '⏺️ 중앙' },
+                          { id: 'bottom', label: '🔽 하단' },
+                        ].map((pos) => {
+                          const currentPos = screenshotUrl.includes('#pos=') ? (screenshotUrl.match(/#pos=([a-z0-9%_-]+)/i)?.[1] || 'center') : 'center';
+                          const isActive = currentPos === pos.id;
+                          return (
+                            <button
+                              key={pos.id}
+                              type="button"
+                              onClick={() => {
+                                const clean = cleanImageUrl(screenshotUrl).trim();
+                                if (!clean) return;
+                                setScreenshotUrl(pos.id === 'center' ? clean : `${clean}#pos=${pos.id}`);
+                              }}
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-all ${
+                                isActive
+                                  ? 'bg-[#FFD23F] border-[#0A0A0A] text-[#0A0A0A] shadow-[1px_1px_0_#0A0A0A]'
+                                  : 'bg-white border-neutral-300 text-[#52525B] hover:text-[#0A0A0A]'
+                              }`}
+                            >
+                              {pos.label}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -657,16 +791,21 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#0A0A0A]">
-                    제작자 연락처 이메일 (선택, 비공개)
+                  <label className="text-xs font-bold text-[#0A0A0A] flex items-center justify-between">
+                    <span>제작자 연락처 (선택 사항)</span>
+                    <span className="text-[10px] text-[#0F7B5F] font-bold">생략 가능</span>
                   </label>
                   <input
-                    type="email"
+                    type="text"
                     value={makerEmail}
                     onChange={(e) => setMakerEmail(e.target.value)}
-                    placeholder="maker@example.com (운영 문의 및 공지용)"
+                    placeholder="생략 가능 (원하실 때만 X 계정, 오픈채팅, 이메일 등 자유 입력)"
+                    maxLength={100}
                     className="w-full px-3 py-2 text-xs bg-white border-2 border-[#0A0A0A] rounded-lg focus:outline-none"
                   />
+                  <p className="text-[11px] text-[#52525B]">
+                    * 개인정보 보호를 위해 비워두셔도 되며, 사이트 관리 코드로 언제든 사이트 수정·삭제가 가능합니다.
+                  </p>
                 </div>
               </div>
 
@@ -717,6 +856,97 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
           )}
         </div>
       </div>
+
+      {/* Example Preview Modal Popover */}
+      {showExample && (
+        <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
+          <div className="relative w-full max-w-lg bg-white rounded-xl border-3 border-[#0A0A0A] shadow-[8px_8px_0_#0A0A0A] overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-5 py-3.5 bg-[#FFD23F] border-b-2 border-[#0A0A0A] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="font-display text-base text-[#0A0A0A]">사이트 등록 작성 예시</span>
+                <span className="text-[10px] font-bold bg-white text-[#0A0A0A] px-2 py-0.5 rounded border border-[#0A0A0A]">
+                  참고 가이드
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowExample(false)}
+                className="p-1 bg-white border border-[#0A0A0A] rounded text-[#0A0A0A] hover:bg-[#F1F0E8] transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-3.5 text-xs text-[#0A0A0A]">
+              <div className="p-2.5 bg-[#FFF3C4] border-2 border-[#0A0A0A] rounded-lg text-xs leading-relaxed">
+                💡 <strong>안내:</strong> 작성 중이던 데이터는 100% 안전하게 유지됩니다. 이 창을 닫고 작성을 계속 진행하세요!
+              </div>
+
+              <div className="space-y-3 bg-[#FAFAF5] p-4 border-2 border-[#0A0A0A] rounded-xl">
+                <div>
+                  <span className="font-bold text-[#52525B] text-[10px] uppercase block">사이트명</span>
+                  <p className="font-bold text-sm text-[#0A0A0A]">바이브로그 (VibeLog)</p>
+                </div>
+
+                <div>
+                  <span className="font-bold text-[#52525B] text-[10px] uppercase block">접속 주소(URL)</span>
+                  <p className="font-mono text-xs text-[#1F5FD1] underline">https://vibelog.example.com</p>
+                </div>
+
+                <div>
+                  <span className="font-bold text-[#52525B] text-[10px] uppercase block">카테고리 & 태그 선택</span>
+                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    <span className="bg-[#FFD23F] text-[#0A0A0A] font-black px-2 py-0.5 rounded border border-[#0A0A0A] text-[11px]">
+                      생산성
+                    </span>
+                    <span className="bg-white px-2 py-0.5 rounded border border-[#0A0A0A] font-bold text-[11px]">
+                      #메모
+                    </span>
+                    <span className="bg-white px-2 py-0.5 rounded border border-[#0A0A0A] font-bold text-[11px]">
+                      #글쓰기
+                    </span>
+                    <span className="bg-white px-2 py-0.5 rounded border border-[#0A0A0A] font-bold text-[11px]">
+                      #대시보드
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="font-bold text-[#52525B] text-[10px] uppercase block">한 줄 소개 (카드에 노출)</span>
+                  <p className="font-medium text-xs text-[#0A0A0A] bg-white p-2 rounded border border-[#0A0A0A]">
+                    매일의 생각과 코딩 기록을 마크다운으로 가볍게 덤프하는 1인 개발 생산성 웹앱
+                  </p>
+                </div>
+
+                <div>
+                  <span className="font-bold text-[#52525B] text-[10px] uppercase block">상세 설명 (상세 팝업에 노출)</span>
+                  <p className="font-medium text-xs text-[#0A0A0A] bg-white p-2.5 rounded border border-[#0A0A0A] leading-relaxed">
+                    복잡한 가입 없이 브라우저에서 바로 마크다운으로 메모를 시작할 수 있습니다.<br />
+                    • 로컬 스토리지 실시간 자동 저장 및 클라우드 백업<br />
+                    • 태그별 잔디 통계 및 주간 리포트<br />
+                    • 다크모드 및 단축키 지원
+                  </p>
+                </div>
+
+                <div>
+                  <span className="font-bold text-[#52525B] text-[10px] uppercase block">제작자 연락처</span>
+                  <p className="text-xs text-[#52525B]">
+                    <strong>디스코드 @viber_dev</strong>, <strong>카카오 오픈채팅 링크</strong>, <strong>이메일</strong> 등 자유 형식
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowExample(false)}
+                className="w-full py-2.5 bg-[#0A0A0A] text-white font-bold text-xs rounded-lg hover:bg-neutral-800 transition-colors shadow-[2px_2px_0_#FFD23F]"
+              >
+                확인 완료 (계속 작성하기)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
