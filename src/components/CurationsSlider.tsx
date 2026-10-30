@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, ChevronRight, ExternalLink, Heart, Sparkles, Eye } from 'lucide-react';
 import { Curation, Service } from '../types';
+import { getImagePosition, cleanImageUrl } from '../lib/api';
 
 interface CurationsSliderProps {
   curations: Curation[];
@@ -180,9 +181,10 @@ export const CurationsSlider: React.FC<CurationsSliderProps> = ({
             >
               {current.thumbnail_url || current.screenshot_url ? (
                 <img
-                  src={current.thumbnail_url || current.screenshot_url || undefined}
+                  src={cleanImageUrl(current.thumbnail_url || current.screenshot_url || undefined)}
                   alt={current.name}
-                  className="w-full h-full object-cover object-top group-hover:scale-102 transition-transform duration-300"
+                  style={{ objectPosition: getImagePosition(current.thumbnail_url || current.screenshot_url) }}
+                  className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-300"
                   onError={(e) => {
                     (e.target as HTMLElement).style.display = 'none';
                   }}
