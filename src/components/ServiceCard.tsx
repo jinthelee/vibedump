@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Service } from '../types';
 import { Heart, ExternalLink, Bookmark, MessageSquare } from 'lucide-react';
-import { toggleReaction, toggleFavorite, trackPromoClick } from '../lib/api';
+import { toggleReaction, toggleFavorite, trackPromoClick, getImagePosition, cleanImageUrl } from '../lib/api';
 
 interface ServiceCardProps {
   service: Service;
@@ -64,10 +64,11 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
       <div className="relative aspect-[16/10] w-full overflow-hidden bg-[#F1F0E8] border-b-2 border-[#0A0A0A]">
         {!imageError && service.thumbnail_url ? (
           <img
-            src={service.thumbnail_url}
+            src={cleanImageUrl(service.thumbnail_url)}
             alt={service.name}
             referrerPolicy="no-referrer"
             onError={() => setImageError(true)}
+            style={{ objectPosition: getImagePosition(service.thumbnail_url) }}
             className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
           />
         ) : (
@@ -127,7 +128,7 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
 
           {/* Tags Chips */}
           <div className="flex items-center gap-1.5 flex-wrap pt-1">
-            {service.tags.slice(0, 3).map((tag) => (
+            {(Array.isArray(service.tags) ? service.tags : []).slice(0, 3).map((tag) => (
               <span
                 key={tag}
                 className="text-[11px] font-bold text-[#0A0A0A] bg-[#F1F0E8] px-2 py-0.5 rounded border border-[#0A0A0A]"
