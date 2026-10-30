@@ -4,7 +4,7 @@ import {
   X, ExternalLink, Heart, Flame, Sparkles, Rocket, Lightbulb, ThumbsUp,
   Bookmark, Flag, MessageSquare, Megaphone, Share2, Star, Check
 } from 'lucide-react';
-import { fetchServiceDetail, toggleReaction, submitReview, toggleFavorite } from '../lib/api';
+import { fetchServiceDetail, toggleReaction, submitReview, toggleFavorite, getImagePosition, cleanImageUrl } from '../lib/api';
 
 interface ServiceDetailModalProps {
   serviceId: number;
@@ -228,9 +228,10 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
           {service.screenshot_url || service.thumbnail_url ? (
             <div className="relative aspect-[16/9] w-full rounded-xl overflow-hidden bg-[#F1F0E8] border-2 border-[#0A0A0A] shadow-[3px_3px_0_#0A0A0A]">
               <img
-                src={service.screenshot_url || service.thumbnail_url || ''}
+                src={cleanImageUrl(service.screenshot_url || service.thumbnail_url || '')}
                 alt={service.name}
                 referrerPolicy="no-referrer"
+                style={{ objectPosition: getImagePosition(service.screenshot_url || service.thumbnail_url) }}
                 className="w-full h-full object-cover"
               />
             </div>
@@ -473,7 +474,7 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
               {maker_posts.length === 0 ? (
                 <div className="text-center py-8 text-xs text-[#52525B] space-y-1">
                   <p className="font-bold">등록된 제작자 공지가 없습니다.</p>
-                  <p>제작자 스튜디오에서 코드로 인증 후 새 소식을 공유할 수 있습니다.</p>
+                  <p>[사이트 관리] 메뉴에서 사이트 관리 코드로 인증 후 새 소식을 공유할 수 있습니다.</p>
                 </div>
               ) : (
                 maker_posts.map((post) => (
