@@ -831,7 +831,30 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (!db) return json({ services: [] });
     try {
       const res = await db.prepare('SELECT * FROM services ORDER BY id DESC').all();
-      return json({ services: res.results || [] });
+      const services = res.results || [];
+
+      try {
+        const allTagsRes = await db.prepare(`
+          SELECT st.service_id, t.name
+          FROM service_tags st
+          JOIN tags t ON st.tag_id = t.id
+        `).all();
+        const tagMap = new Map<number, string[]>();
+        for (const row of (allTagsRes.results || [])) {
+          const sid = Number(row.service_id);
+          if (!tagMap.has(sid)) tagMap.set(sid, []);
+          tagMap.get(sid)!.push(row.name);
+        }
+        for (const s of services) {
+          s.tags = tagMap.get(Number(s.id)) || [];
+        }
+      } catch {
+        for (const s of services) {
+          s.tags = s.tags || [];
+        }
+      }
+
+      return json({ services });
     } catch {
       return json({ services: [] });
     }
