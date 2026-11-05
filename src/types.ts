@@ -73,20 +73,23 @@ export interface MakerPost {
 }
 
 export interface Curation {
-  curation_id: number;
-  id: number;
-  name: string;
-  url: string;
-  short_desc: string;
-  category: CategoryType;
-  thumbnail_url: string | null;
+  curation_id?: number;
+  id?: number;
+  service_id?: number;
+  service_name?: string;
+  name?: string;
+  url?: string;
+  short_desc?: string;
+  category?: CategoryType;
+  thumbnail_url?: string | null;
   screenshot_url?: string | null;
-  likes_count: number;
-  views_count: number;
+  likes_count?: number;
+  views_count?: number;
   badge_text: string;
   editorial_blurb: string;
-  display_order: number;
-  tags: string[];
+  display_order?: number;
+  is_active?: number;
+  tags?: string[];
 }
 
 export interface Promotion {
