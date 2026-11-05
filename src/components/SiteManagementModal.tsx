@@ -9,6 +9,7 @@ import {
   fetchServiceDetail,
   verifyMaker, updateMakerService, createMakerPost, deleteMakerService,
   adminAuth, adminGetServices, adminUpdateService, adminUpdateServiceStatus, adminUpdateServiceCategory, adminDeleteService,
+  adminBatchCreateServices,
   adminGetReports, adminResolveReport, adminGetReviews, adminUpdateReviewStatus,
   adminGetTags, adminMergeTags, adminGetCurations, adminCreateCuration,
   adminDeleteCuration, adminGetPromotions, adminCreatePromotion,
@@ -173,6 +174,13 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
     tags: '',
   });
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  // CSV Batch Upload State
+  const [showCsvBatch, setShowCsvBatch] = useState(false);
+  const [csvPreview, setCsvPreview] = useState<any[]>([]);
+  const [csvFileName, setCsvFileName] = useState('');
+  const [csvError, setCsvError] = useState<string | null>(null);
+  const [isProcessingCsv, setIsProcessingCsv] = useState(false);
 
   // Admin tags merge
   const [mergeSource, setMergeSource] = useState<number | ''>('');
@@ -625,6 +633,205 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
       alert(err.message || '서비스 수정 실패');
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  // CSV Sample Template Download
+  const handleDownloadCsvTemplate = () => {
+    const csvContent =
+      '\uFEFF' +
+      '서비스명,사이트주소,한줄소개,카테고리,태그,썸네일URL,제작자명,상세설명\n' +
+      '노션,https://notion.so,올인원 협업 및 기록 워크스페이스,생산성,"메모, 협업, 템플릿",https://example.com/notion.png,NotionTeam,문서 작성 및 데이터베이스 관리 도구\n' +
+      '피그마,https://figma.com,웹 기반 실시간 협업 디자인 툴,창작,"디자인, 협업, UI",https://example.com/figma.png,Figma,웹 브라우저에서 바로 협업하는 벡터 그래픽 디자인 툴\n' +
+      '지피티,https://chatgpt.com,오픈AI의 대화형 인공지능 어시스턴트,생산성,"AI챗, 인공지능, 글쓰기",,OpenAI,글쓰기 및 코딩 지원 AI 어시스턴트\n';
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'vibedump_sites_sample_template.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // CSV File Upload & Parse
+  const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCsvError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setCsvFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = String(event.target?.result || '');
+        if (!text.trim()) {
+          setCsvError('선택한 파일이 비어 있습니다.');
+          return;
+        }
+
+        const clean = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines: string[] = [];
+        let row = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < clean.length; i++) {
+          const c = clean[i];
+          if (c === '"') {
+            inQuotes = !inQuotes;
+            row += c;
+          } else if (c === '\n' && !inQuotes) {
+            if (row.trim()) lines.push(row);
+            row = '';
+          } else {
+            row += c;
+          }
+        }
+        if (row.trim()) lines.push(row);
+
+        if (lines.length < 2) {
+          setCsvError('최소 1개 이상의 데이터 행이 포함되어야 합니다. (헤더 1줄 + 데이터 1줄 이상)');
+          return;
+        }
+
+        const parseLine = (line: string): string[] => {
+          const cells: string[] = [];
+          let cur = '';
+          let inQ = false;
+          for (let j = 0; j < line.length; j++) {
+            const ch = line[j];
+            if (ch === '"') {
+              if (inQ && line[j + 1] === '"') {
+                cur += '"';
+                j++;
+              } else {
+                inQ = !inQ;
+              }
+            } else if (ch === ',' && !inQ) {
+              cells.push(cur.trim());
+              cur = '';
+            } else {
+              cur += ch;
+            }
+          }
+          cells.push(cur.trim());
+          return cells;
+        };
+
+        const headerCells = parseLine(lines[0]).map((h) =>
+          h.replace(/^["']|["']$/g, '').trim().toLowerCase().replace(/\s+/g, '')
+        );
+
+        const findIdx = (keywords: string[]) => {
+          return headerCells.findIndex((h) => keywords.some((k) => h.includes(k)));
+        };
+
+        const nameIdx = findIdx(['서비스명', '사이트명', '이름', 'name', 'title']);
+        const urlIdx = findIdx(['사이트주소', '주소', 'url', 'link', '링크']);
+        const shortDescIdx = findIdx(['한줄소개', '소개', 'short_desc', 'summary', '요약']);
+        const catIdx = findIdx(['카테고리', '분야', 'category']);
+        const tagIdx = findIdx(['태그', 'tags', 'tag']);
+        const thumbIdx = findIdx(['썸네일', 'thumbnail', 'image', '이미지']);
+        const screenIdx = findIdx(['스크린샷', 'screenshot']);
+        const makerIdx = findIdx(['제작자', 'maker', '작성자', '만든이']);
+        const descIdx = findIdx(['상세설명', '설명', 'description', 'desc', '본문']);
+
+        const parsedItems = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cells = parseLine(lines[i]);
+          if (cells.every((c) => !c)) continue;
+
+          const rawName = (nameIdx !== -1 ? cells[nameIdx] : cells[0]) || '';
+          const rawUrl = (urlIdx !== -1 ? cells[urlIdx] : cells[1]) || '';
+          const rawShort = (shortDescIdx !== -1 ? cells[shortDescIdx] : cells[2]) || '';
+          const rawCat = (catIdx !== -1 ? cells[catIdx] : '') || '생산성';
+          const rawTag = (tagIdx !== -1 ? cells[tagIdx] : '') || '';
+          const rawThumb = (thumbIdx !== -1 ? cells[thumbIdx] : '') || '';
+          const rawScreen = (screenIdx !== -1 ? cells[screenIdx] : '') || '';
+          const rawMaker = (makerIdx !== -1 ? cells[makerIdx] : '') || '';
+          const rawDesc = (descIdx !== -1 ? cells[descIdx] : '') || '';
+
+          const name = rawName.replace(/^["']|["']$/g, '').trim();
+          let url = rawUrl.replace(/^["']|["']$/g, '').trim();
+          if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+            url = `https://${url}`;
+          }
+          const short_desc = (rawShort.replace(/^["']|["']$/g, '').trim() || name).slice(0, 100);
+          const description = rawDesc.replace(/^["']|["']$/g, '').trim() || short_desc;
+          const category = rawCat.replace(/^["']|["']$/g, '').trim() || '생산성';
+          const tags = rawTag
+            .replace(/^["']|["']$/g, '')
+            .split(/[,/|#]/)
+            .map((t) => t.trim().replace(/^#+/, ''))
+            .filter(Boolean)
+            .slice(0, 5);
+
+          const thumbnail_url = rawThumb.replace(/^["']|["']$/g, '').trim() || undefined;
+          const screenshot_url = rawScreen.replace(/^["']|["']$/g, '').trim() || undefined;
+          const maker_name = rawMaker.replace(/^["']|["']$/g, '').trim() || undefined;
+
+          const isValid = Boolean(name && url);
+          const errorMsg = !name ? '서비스명 누락' : !url ? '사이트주소 누락' : undefined;
+
+          parsedItems.push({
+            name,
+            url,
+            short_desc,
+            description,
+            category,
+            tags,
+            thumbnail_url,
+            screenshot_url,
+            maker_name,
+            isValid,
+            error: errorMsg,
+          });
+        }
+
+        if (parsedItems.length === 0) {
+          setCsvError('유효한 데이터 행을 찾을 수 없습니다.');
+          setCsvPreview([]);
+          return;
+        }
+
+        setCsvPreview(parsedItems);
+      } catch (err: any) {
+        setCsvError(`CSV 파싱 실패: ${err?.message || '파일 형식을 확인해주세요.'}`);
+      }
+    };
+    reader.onerror = () => setCsvError('파일을 읽는 도중 오류가 발생했습니다.');
+    reader.readAsText(file);
+  };
+
+  // Execute Batch Import
+  const handleExecuteCsvImport = async () => {
+    if (!adminToken) return;
+    const validItems = csvPreview.filter((item) => item.isValid);
+    if (validItems.length === 0) {
+      alert('등록 가능한 유효한 사이트 데이터가 없습니다. 서비스명과 사이트 주소를 확인해주세요.');
+      return;
+    }
+
+    if (!confirm(`총 ${validItems.length}개의 사이트를 데이터베이스에 일괄 등록하시겠습니까?`)) {
+      return;
+    }
+
+    setIsProcessingCsv(true);
+    try {
+      const res = await adminBatchCreateServices(validItems, adminToken);
+      setAdminMsg(`🎉 ${res.message || `${res.count}개 사이트 일괄 등록 완료!`}`);
+      setCsvPreview([]);
+      setCsvFileName('');
+      setShowCsvBatch(false);
+      loadAdminData(adminToken);
+      onRefreshAll();
+      setTimeout(() => setAdminMsg(null), 4000);
+    } catch (err: any) {
+      alert(err.message || '일괄 등록 중 오류가 발생했습니다.');
+    } finally {
+      setIsProcessingCsv(false);
     }
   };
 
@@ -2071,6 +2278,176 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
                 {/* Services Review & Direct Card Editing Tab */}
                 {adminTab === 'services' && (
                   <div className="space-y-4">
+                    {/* CSV Batch Upload Header Card */}
+                    <div className="p-3.5 bg-gradient-to-r from-[#FFFBEA] to-[#F1F0E8] border-2 border-[#0A0A0A] rounded-xl flex items-center justify-between flex-wrap gap-2 shadow-[2px_2px_0_#0A0A0A]">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 bg-[#FFD23F] border border-[#0A0A0A] rounded text-[11px] font-black text-[#0A0A0A]">
+                            📊 대량 등록
+                          </span>
+                          <h4 className="font-display text-sm text-[#0A0A0A]">엑셀 / CSV 파일로 사이트 한 번에 올리기</h4>
+                        </div>
+                        <p className="text-[11px] text-[#52525B] mt-0.5">
+                          구글 스프레드시트나 엑셀 표로 정리한 사이트 목록(.csv)을 한 번에 데이터베이스에 밀어넣을 수 있습니다.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleDownloadCsvTemplate}
+                          className="px-3 py-1.5 bg-white hover:bg-neutral-100 border border-[#0A0A0A] rounded-lg text-xs font-bold shadow-[1px_1px_0_#0A0A0A] flex items-center gap-1.5 text-[#0A0A0A]"
+                          title="엑셀에서 바로 열리는 샘플 템플릿 다운로드"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>양식 다운로드</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCsvBatch(!showCsvBatch);
+                            setCsvError(null);
+                          }}
+                          className={`px-3.5 py-1.5 border-2 border-[#0A0A0A] rounded-lg text-xs font-black shadow-[2px_2px_0_#0A0A0A] active:translate-x-0.5 flex items-center gap-1.5 transition-all ${
+                            showCsvBatch ? 'bg-[#0A0A0A] text-white' : 'bg-[#06D6A0] text-[#0A0A0A]'
+                          }`}
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{showCsvBatch ? '업로드 닫기' : 'CSV 파일 올리기'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* CSV Batch Upload Expandable Panel */}
+                    {showCsvBatch && (
+                      <div className="p-4 bg-[#FAFAF5] border-2 border-[#0A0A0A] rounded-xl space-y-3.5 shadow-[4px_4px_0_#0A0A0A] animate-in fade-in duration-200">
+                        <div className="flex items-center justify-between border-b-2 border-[#0A0A0A]/20 pb-2">
+                          <div>
+                            <b className="text-xs font-bold text-[#0A0A0A]">파일 선택 및 미리보기</b>
+                            <p className="text-[11px] text-[#52525B]">
+                              [양식 다운로드]로 받은 .csv 파일에 데이터를 채운 뒤 아래에 업로드하세요.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleDownloadCsvTemplate}
+                            className="text-[11px] text-[#1F5FD1] underline font-bold"
+                          >
+                            엑셀 양식 다시 받기 (.csv)
+                          </button>
+                        </div>
+
+                        {/* File Input Box */}
+                        <div className="flex items-center gap-2">
+                          <label className="flex-1 cursor-pointer">
+                            <div className="p-3 bg-white border-2 border-dashed border-[#0A0A0A] rounded-xl text-center hover:bg-[#FFFBEA] transition-colors">
+                              <span className="text-xs font-bold text-[#0A0A0A] block">
+                                {csvFileName ? `📄 선택된 파일: ${csvFileName}` : '📁 클릭하여 CSV 파일(.csv)을 선택하세요'}
+                              </span>
+                              <span className="text-[10px] text-[#71717A]">
+                                UTF-8 또는 엑셀에서 "CSV UTF-8 (쉼표로 분리)"로 저장한 파일 지원
+                              </span>
+                            </div>
+                            <input
+                              type="file"
+                              accept=".csv,text/csv,text/comma-separated-values"
+                              onChange={handleCsvFileChange}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+
+                        {/* Error Message */}
+                        {csvError && (
+                          <div className="p-2.5 bg-[#FFE5EC] border-2 border-[#0A0A0A] rounded-lg text-xs font-bold text-[#C81E4B]">
+                            ⚠️ {csvError}
+                          </div>
+                        )}
+
+                        {/* CSV Preview Table */}
+                        {csvPreview.length > 0 && (
+                          <div className="space-y-2 pt-1">
+                            <div className="flex items-center justify-between text-xs font-bold text-[#0A0A0A]">
+                              <span>
+                                파싱 결과: 총 <strong className="text-[#1F5FD1]">{csvPreview.length}개</strong> 감지 (유효: {csvPreview.filter((p) => p.isValid).length}개
+                                {csvPreview.some((p) => !p.isValid) && `, 오류: ${csvPreview.filter((p) => !p.isValid).length}개`})
+                              </span>
+                              <span className="text-[11px] text-[#71717A]">최대 10개 미리보기 표시</span>
+                            </div>
+
+                            <div className="overflow-x-auto border-2 border-[#0A0A0A] rounded-lg bg-white max-h-[220px]">
+                              <table className="w-full text-left text-[11px]">
+                                <thead className="bg-[#F1F0E8] border-b border-[#0A0A0A] font-bold sticky top-0">
+                                  <tr>
+                                    <th className="p-2">상태</th>
+                                    <th className="p-2">서비스명</th>
+                                    <th className="p-2">URL</th>
+                                    <th className="p-2">카테고리</th>
+                                    <th className="p-2">태그</th>
+                                    <th className="p-2">한줄소개</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-neutral-200">
+                                  {csvPreview.slice(0, 10).map((row, rIdx) => (
+                                    <tr key={`csv-preview-${rIdx}`} className={row.isValid ? 'hover:bg-neutral-50' : 'bg-[#FFF0F3]'}>
+                                      <td className="p-2 font-bold whitespace-nowrap">
+                                        {row.isValid ? (
+                                          <span className="text-[#06D6A0]">✓ 정상</span>
+                                        ) : (
+                                          <span className="text-[#C81E4B]">✕ {row.error}</span>
+                                        )}
+                                      </td>
+                                      <td className="p-2 font-bold whitespace-nowrap">{row.name || '-'}</td>
+                                      <td className="p-2 text-[#52525B] max-w-[150px] truncate">{row.url || '-'}</td>
+                                      <td className="p-2 whitespace-nowrap">{row.category}</td>
+                                      <td className="p-2 text-[#52525B] whitespace-nowrap">
+                                        {row.tags.length > 0 ? row.tags.join(', ') : '-'}
+                                      </td>
+                                      <td className="p-2 text-[#52525B] max-w-[180px] truncate">{row.short_desc}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            {/* Batch Action Buttons */}
+                            <div className="flex items-center justify-end gap-2 pt-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCsvPreview([]);
+                                  setCsvFileName('');
+                                }}
+                                className="px-3 py-2 bg-white border border-[#0A0A0A] rounded-lg text-xs font-bold hover:bg-neutral-100"
+                              >
+                                취소
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={handleExecuteCsvImport}
+                                disabled={isProcessingCsv || csvPreview.filter((p) => p.isValid).length === 0}
+                                className="px-5 py-2.5 bg-[#06D6A0] hover:bg-[#06D6A0]/85 border-2 border-[#0A0A0A] rounded-xl text-xs font-black shadow-[3px_3px_0_#0A0A0A] active:translate-x-0.5 flex items-center gap-2 disabled:opacity-50"
+                              >
+                                {isProcessingCsv ? (
+                                  <>
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    <span>DB에 일괄 등록 중...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check className="w-4 h-4" />
+                                    <span>{csvPreview.filter((p) => p.isValid).length}개 사이트 일괄 등록 실행</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Inline Editor if a service is being edited */}
                     {editingService && (
                       <div className="p-4 bg-[#FFF8D6] border-2 border-[#0A0A0A] rounded-xl space-y-3 shadow-[4px_4px_0_#0A0A0A] mb-5">
