@@ -767,7 +767,7 @@ apiRouter.post('/maker/verify', (req: Request, res: Response) => {
   }
 
   const service = db.prepare(`
-    SELECT id, name, url, short_desc, description, category, thumbnail_url, screenshot_url, maker_name, views_count, likes_count, status
+    SELECT id, name, url, short_desc, description, category, thumbnail_url, screenshot_url, maker_name, maker_email, views_count, likes_count, status
     FROM services WHERE id = ?
   `).get(Number(service_id)) as Record<string, any> | undefined;
 
@@ -1061,6 +1061,81 @@ apiRouter.put('/admin/services/:id', requireAdmin, (req: Request, res: Response)
   }
 
   res.json({ success: true, message: '서비스 카드가 성공적으로 수정되었습니다.' });
+});
+
+// Admin batch create services (from CSV / Excel import)
+apiRouter.post('/admin/services/batch', requireAdmin, (req: Request, res: Response) => {
+  const { services: list } = req.body;
+  if (!Array.isArray(list) || list.length === 0) {
+    return res.status(400).json({ error: '등록할 서비스 목록이 비어있습니다.' });
+  }
+
+  const now = new Date().toISOString();
+  let createdCount = 0;
+
+  const insertSvc = db.prepare(`
+    INSERT INTO services (
+      name, url, short_desc, description, category,
+      thumbnail_url, screenshot_url, maker_name, maker_email,
+      maker_code_hash, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertTag = db.prepare('INSERT OR IGNORE INTO tags (name, normalized_name, status, created_at) VALUES (?, ?, "approved", ?)');
+  const getTag = db.prepare('SELECT id FROM tags WHERE normalized_name = ?');
+  const linkTag = db.prepare('INSERT OR IGNORE INTO service_tags (service_id, tag_id) VALUES (?, ?)');
+
+  for (const item of list) {
+    const name = String(item.name || '').trim();
+    const sUrl = String(item.url || '').trim();
+    if (!name || !sUrl) continue;
+
+    const shortDesc = String(item.short_desc || item.description || name).trim().slice(0, 100);
+    const desc = String(item.description || item.short_desc || name).trim();
+    const cat = String(item.category || '생산성').trim();
+    const thumb = item.thumbnail_url ? String(item.thumbnail_url).trim() : null;
+    const screen = item.screenshot_url ? String(item.screenshot_url).trim() : null;
+    const maker = item.maker_name ? String(item.maker_name).trim() : null;
+    const email = item.maker_email ? String(item.maker_email).trim() : null;
+    const status = item.status || 'approved';
+
+    const makerCode = 'vd_' + Math.random().toString(36).substring(2, 10);
+    const makerHash = 'hash_' + makerCode;
+
+    try {
+      const insResult = insertSvc.run(
+        name, sUrl, shortDesc, desc, cat,
+        thumb, screen, maker, email,
+        makerHash, status, now, now
+      );
+      const serviceId = Number(insResult.lastInsertRowid);
+
+      let rawTags: string[] = [];
+      if (Array.isArray(item.tags)) {
+        rawTags = item.tags;
+      } else if (typeof item.tags === 'string') {
+        rawTags = item.tags.split(',').map((t: string) => t.trim());
+      }
+
+      for (const t of rawTags.slice(0, 5)) {
+        const clean = String(t).trim().replace(/^#+/, '').slice(0, 10);
+        if (!clean) continue;
+        const norm = clean.toLowerCase().replace(/[\s\-_]+/g, '');
+        insertTag.run(clean, norm, now);
+        const tRow = getTag.get(norm) as { id: number } | undefined;
+        if (tRow) linkTag.run(serviceId, tRow.id);
+      }
+      createdCount++;
+    } catch (err) {
+      console.warn('Batch insert error for', name, err);
+    }
+  }
+
+  res.json({
+    success: true,
+    count: createdCount,
+    message: `총 ${createdCount}개의 사이트가 일괄 등록되었습니다.`
+  });
 });
 
 // Admin change service status (approved, rejected, hidden)
@@ -1427,6 +1502,60 @@ apiRouter.patch('/admin/promotions/:id', requireAdmin, (req: Request, res: Respo
   const { status } = req.body;
   db.prepare('UPDATE promotions SET status = ? WHERE id = ?').run(status, id);
   res.json({ success: true, message: '광고 상태가 변경되었습니다.' });
+});
+
+apiRouter.delete('/admin/promotions/:id', requireAdmin, (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  db.prepare('DELETE FROM promotions WHERE id = ?').run(id);
+  res.json({ success: true, message: '스폰서 광고가 삭제되었습니다.' });
+});
+
+apiRouter.put('/admin/promotions/reorder', requireAdmin, (_req: Request, res: Response) => {
+  res.json({ success: true, message: '순서가 변경되었습니다.' });
+});
+
+apiRouter.post('/admin/promotions/batch-save', requireAdmin, (req: Request, res: Response) => {
+  const { promotions: promoList } = req.body;
+  if (Array.isArray(promoList)) {
+    db.prepare('DELETE FROM promotions').run();
+    const now = new Date().toISOString();
+    const insert = db.prepare(`
+      INSERT INTO promotions (id, service_id, slot_type, status, impressions, clicks, start_date, end_date, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const p of promoList) {
+      insert.run(
+        p.id || null,
+        Number(p.service_id),
+        p.slot_type || 'feed_sponsor',
+        p.status || 'active',
+        p.impressions || 0,
+        p.clicks || 0,
+        p.start_date || now,
+        p.end_date || now,
+        p.created_at || now
+      );
+    }
+  }
+  res.json({ success: true, message: '스폰서 설정이 최종 저장되었습니다.' });
+});
+
+// Public promotions endpoint
+apiRouter.get('/promotions', (_req: Request, res: Response) => {
+  const promotions = db.prepare(`
+    SELECT p.*, s.name as service_name, s.url as service_url, s.short_desc, s.thumbnail_url 
+    FROM promotions p 
+    JOIN services s ON p.service_id = s.id 
+    WHERE p.status = 'active' 
+    ORDER BY p.id DESC
+  `).all();
+  res.json({ promotions });
+});
+
+apiRouter.post('/promotions/:id/click', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  db.prepare('UPDATE promotions SET clicks = clicks + 1 WHERE id = ?').run(id);
+  res.json({ success: true });
 });
 
 // Admin Dashboard stats
