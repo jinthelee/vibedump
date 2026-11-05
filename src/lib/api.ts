@@ -401,6 +401,30 @@ export async function adminDeleteService(id: number, token: string) {
   return await handleResponse(res, '서비스 삭제 실패');
 }
 
+export async function adminBatchCreateServices(
+  services: Array<{
+    name: string;
+    url: string;
+    short_desc: string;
+    description?: string;
+    category?: string;
+    tags?: string[] | string;
+    thumbnail_url?: string;
+    screenshot_url?: string;
+    maker_name?: string;
+    maker_email?: string;
+    status?: string;
+  }>,
+  token: string
+): Promise<{ success: boolean; count: number; message: string }> {
+  const res = await fetch(`${BASE_URL}/admin/services/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({ services }),
+  });
+  return await handleResponse(res, '서비스 일괄 등록 실패');
+}
+
 export async function adminGetCategories(token: string): Promise<{ categories: string[] }> {
   const res = await fetch(`${BASE_URL}/admin/categories`, {
     headers: { 'x-admin-token': token },
