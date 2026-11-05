@@ -439,6 +439,7 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
       setReports(repRes.reports);
       setReviews(revRes.reviews);
       setTags(tagRes.tags);
+      setCurations(curRes.curations || []);
       setPromotions(pRes.promotions);
       setStagedPromos(pRes.promotions || []);
       setHasUnsavedPromos(false);
@@ -825,12 +826,15 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
 
   const handleDeleteCuration = async (curationId: number) => {
     if (!adminToken) return;
+    if (!confirm('이 큐레이션을 상단 슬라이더에서 삭제하시겠습니까?')) return;
     try {
       await adminDeleteCuration(curationId, adminToken);
+      setAdminMsg('큐레이션이 상단 슬라이더에서 삭제되었습니다.');
       loadAdminData(adminToken);
       onRefreshAll();
+      setTimeout(() => setAdminMsg(null), 3000);
     } catch (err: any) {
-      alert(err.message);
+      alert(err.message || '큐레이션 삭제 실패');
     }
   };
 
@@ -2479,21 +2483,52 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
                       </div>
                     </form>
 
-                    <div className="space-y-1.5">
-                      {curations.map((c, idx) => {
-                        const curId = c.id || c.curation_id || idx;
-                        return (
-                          <div key={`curation-${curId}-${idx}`} className="p-2.5 bg-white border-2 border-[#0A0A0A] rounded-lg flex items-center justify-between text-xs font-bold">
-                            <div>
-                              <span className="text-[#1F5FD1]">[{c.badge_text}]</span> {c.name || (c as any).service_name}
-                              <span className="text-[#52525B] font-normal block italic">"{c.editorial_blurb}"</span>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold text-[#52525B]">
+                        <span>현재 등록된 큐레이션 ({curations.length}개)</span>
+                      </div>
+
+                      {curations.length === 0 ? (
+                        <p className="text-xs text-[#52525B] text-center py-6 bg-white border-2 border-[#0A0A0A] rounded-xl font-bold">
+                          현재 등록된 큐레이션이 없습니다.
+                        </p>
+                      ) : (
+                        curations.map((c, idx) => {
+                          const curId = c.curation_id || c.id || idx;
+                          const targetService = services.find((s) => s.id === c.service_id);
+                          const serviceTitle = c.name || (c as any).service_name || targetService?.name || `서비스 #${c.service_id}`;
+
+                          return (
+                            <div
+                              key={`curation-${curId}-${idx}`}
+                              className="p-3 bg-white border-2 border-[#0A0A0A] rounded-xl flex items-center justify-between gap-3 text-xs font-bold shadow-[2px_2px_0_#0A0A0A]"
+                            >
+                              <div className="space-y-0.5 min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="bg-[#06D6A0] text-[#0A0A0A] px-2 py-0.5 rounded text-[11px] font-black border border-[#0A0A0A]">
+                                    {c.badge_text || '에디터 픽'}
+                                  </span>
+                                  <span className="text-[#0A0A0A] font-display text-sm truncate">
+                                    {serviceTitle}
+                                  </span>
+                                </div>
+                                <p className="text-[#52525B] font-normal italic text-[11px] truncate">
+                                  "{c.editorial_blurb}"
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCuration(Number(curId))}
+                                className="p-1.5 bg-[#FF6B9E] hover:bg-[#FF6B9E]/85 border border-[#0A0A0A] rounded text-[#0A0A0A] transition-colors flex-shrink-0"
+                                title="큐레이션 슬라이더에서 삭제"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             </div>
-                            <button onClick={() => handleDeleteCuration(Number(curId))} className="p-1 hover:text-red-600">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        );
-                      })}
+                          );
+                        })
+                      )}
                     </div>
                   </div>
                 )}
