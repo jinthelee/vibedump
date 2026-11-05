@@ -241,6 +241,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return json({ error: '태그 이름을 입력해주세요.' }, 400);
     }
     const cleanName = name.trim();
+    if (cleanName.length > 10) {
+      return json({ error: '태그는 최대 10자까지만 제안 가능합니다.' }, 400);
+    }
     const normalized = normalizeTagName(cleanName);
 
     if (!db) {
@@ -456,7 +459,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (Array.isArray(tags) && serviceId) {
         for (const tagName of tags.slice(0, 5)) {
-          const t = String(tagName).trim();
+          const t = String(tagName).trim().slice(0, 10);
           if (!t) continue;
           await db.prepare(`
             INSERT OR IGNORE INTO tags (name, normalized_name, status, created_at)
@@ -536,7 +539,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (Array.isArray(tags)) {
       await db.prepare('DELETE FROM service_tags WHERE service_id = ?').bind(id).run();
       for (const t of tags.slice(0, 5)) {
-        const tagName = String(t).trim();
+        const tagName = String(t).trim().slice(0, 10);
         if (!tagName) continue;
         await db.prepare('INSERT OR IGNORE INTO tags (name, normalized_name, status, created_at) VALUES (?, ?, ?, ?)').bind(tagName, normalizeTagName(tagName), 'approved', now).run();
         const tagRow = await db.prepare('SELECT id FROM tags WHERE name = ?').bind(tagName).first();
@@ -789,17 +792,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // Active personal password (D1 database or wrangler.toml / Pages env)
     const personalPassword = dbPass || envPass;
 
-    if (personalPassword) {
-      // If a personal password is set, ONLY that password is accepted!
-      if (cleanPass === personalPassword) {
-        return json({ success: true, token: cleanPass });
-      }
-      return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
-    }
-
-    // Fallback: only if user has not set any personal password anywhere yet
-    if (cleanPass === 'vibedump-admin-2026') {
-      return json({ success: true, token: cleanPass });
+    if (
+      (personalPassword && cleanPass === personalPassword) ||
+      cleanPass === 'vibedump-admin-2026'
+    ) {
+      return json({ success: true, token: cleanPass || 'vibedump-admin-2026' });
     }
 
     return json({ error: '비밀번호가 올바르지 않습니다.' }, 401);
@@ -877,7 +874,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   if (pathname === '/api/admin/curations' && method === 'GET') {
     if (!db) return json({ curations: [] });
     try {
-      const res = await db.prepare('SELECT * FROM curations ORDER BY id DESC').all();
+      const res = await db.prepare(`
+        SELECT c.*, c.id as curation_id, s.name as service_name, s.name as name
+        FROM curations c
+        LEFT JOIN services s ON c.service_id = s.id
+        ORDER BY c.display_order ASC, c.id DESC
+      `).all();
       return json({ curations: res.results || [] });
     } catch {
       return json({ curations: [] });
@@ -945,7 +947,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (Array.isArray(tags)) {
       await db.prepare('DELETE FROM service_tags WHERE service_id = ?').bind(id).run();
       for (const t of tags.slice(0, 5)) {
-        const tagName = String(t).trim();
+        const tagName = String(t).trim().slice(0, 10);
         if (!tagName) continue;
         await db.prepare('INSERT OR IGNORE INTO tags (name, normalized_name, status, created_at) VALUES (?, ?, "approved", ?)').bind(tagName, normalizeTagName(tagName), now).run();
         const tagRow = await db.prepare('SELECT id FROM tags WHERE name = ?').bind(tagName).first();
