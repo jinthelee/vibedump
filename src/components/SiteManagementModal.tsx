@@ -6,6 +6,7 @@ import {
   Minimize2, Maximize2, Move, EyeOff
 } from 'lucide-react';
 import {
+  fetchServiceDetail,
   verifyMaker, updateMakerService, createMakerPost, deleteMakerService,
   adminAuth, adminGetServices, adminUpdateService, adminUpdateServiceStatus, adminUpdateServiceCategory, adminDeleteService,
   adminGetReports, adminResolveReport, adminGetReviews, adminUpdateReviewStatus,
@@ -548,9 +549,10 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
     }
   };
 
-  const handleStartEditService = (s: Service) => {
+  const handleStartEditService = async (s: Service) => {
     setEditingService(s);
     const isStandard = adminCategories.includes(s.category as any);
+    const initialTags = Array.isArray(s.tags) ? s.tags : [];
     setEditForm({
       name: s.name || '',
       url: s.url || '',
@@ -562,8 +564,22 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
       screenshot_url: s.screenshot_url || '',
       maker_name: s.maker_name || '',
       status: s.status || 'approved',
-      tags: Array.isArray(s.tags) ? s.tags.join(', ') : '',
+      tags: initialTags.join(', '),
     });
+
+    if (initialTags.length === 0 && s.id) {
+      try {
+        const detail = await fetchServiceDetail(s.id);
+        if (detail?.service && Array.isArray(detail.service.tags) && detail.service.tags.length > 0) {
+          setEditForm((prev) => ({
+            ...prev,
+            tags: detail.service.tags.join(', '),
+          }));
+        }
+      } catch (err) {
+        console.warn('Failed to fetch detailed tags for editing:', err);
+      }
+    }
   };
 
   const handleSaveEditService = async (e: React.FormEvent) => {
@@ -2242,8 +2258,20 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
                           {services.map((s, idx) => (
                             <tr key={`service-row-${s.id || idx}`} className="hover:bg-[#FAFAF5]">
                               <td className="p-2 font-mono">#{s.id}</td>
-                              <td className="p-2 font-bold max-w-[140px] truncate" title={s.name}>
-                                {s.name}
+                              <td className="p-2 font-bold max-w-[160px]" title={s.name}>
+                                <div className="truncate">{s.name}</div>
+                                {Array.isArray(s.tags) && s.tags.length > 0 && (
+                                  <div className="flex gap-1 flex-wrap mt-0.5">
+                                    {s.tags.slice(0, 3).map((t) => (
+                                      <span key={t} className="text-[10px] text-[#52525B] font-mono bg-white px-1 py-0.2 border border-neutral-300 rounded font-normal">
+                                        #{t}
+                                      </span>
+                                    ))}
+                                    {s.tags.length > 3 && (
+                                      <span className="text-[10px] text-[#52525B] font-normal">+{s.tags.length - 3}</span>
+                                    )}
+                                  </div>
+                                )}
                               </td>
                               <td className="p-2 max-w-[200px] truncate text-[#52525B]" title={s.short_desc}>
                                 {s.short_desc}
