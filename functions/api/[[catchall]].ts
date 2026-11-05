@@ -997,6 +997,91 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ success: true, message: '서비스가 삭제되었습니다.' });
   }
 
+  // Admin Services Batch Import: POST /api/admin/services/batch
+  if (pathname === '/api/admin/services/batch' && method === 'POST') {
+    if (!db) return json({ error: 'DB 연결 필요' }, 503);
+    const body = await parseBody();
+    const list = Array.isArray(body.services) ? body.services : [];
+    if (list.length === 0) {
+      return json({ error: '등록할 서비스 데이터가 없습니다.' }, 400);
+    }
+
+    let createdCount = 0;
+    const now = new Date().toISOString();
+
+    for (const item of list) {
+      const name = String(item.name || '').trim();
+      const sUrl = String(item.url || '').trim();
+      if (!name || !sUrl) continue;
+
+      const shortDesc = String(item.short_desc || item.description || name).trim().slice(0, 100);
+      const desc = String(item.description || item.short_desc || name).trim();
+      const cat = String(item.category || '생산성').trim();
+      const thumb = item.thumbnail_url ? String(item.thumbnail_url).trim() : null;
+      const screen = item.screenshot_url ? String(item.screenshot_url).trim() : null;
+      const maker = item.maker_name ? String(item.maker_name).trim() : null;
+      const email = item.maker_email ? String(item.maker_email).trim() : null;
+      const status = item.status || 'approved';
+
+      const makerCode = generateMakerCode();
+      const makerHash = await sha256(makerCode);
+
+      try {
+        const ins = await db.prepare(`
+          INSERT INTO services (
+            name, url, short_desc, description, category,
+            thumbnail_url, screenshot_url, maker_name, maker_email,
+            maker_code_hash, status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          name, sUrl, shortDesc, desc, cat,
+          thumb, screen, maker, email,
+          makerHash, status, now, now
+        ).run();
+
+        let serviceId = ins.meta?.last_row_id || (ins as any).lastRowId;
+        if (!serviceId) {
+          const lastRow = await db.prepare('SELECT last_insert_rowid() as id').first().catch(() => null);
+          if (lastRow && (lastRow as any).id) {
+            serviceId = (lastRow as any).id;
+          }
+        }
+
+        let rawTags: string[] = [];
+        if (Array.isArray(item.tags)) {
+          rawTags = item.tags;
+        } else if (typeof item.tags === 'string') {
+          rawTags = item.tags.split(',').map((t: string) => t.trim());
+        }
+
+        if (serviceId && rawTags.length > 0) {
+          for (const tagName of rawTags.slice(0, 5)) {
+            const t = String(tagName).trim().replace(/^#+/, '').slice(0, 10);
+            if (!t) continue;
+            await db.prepare(`
+              INSERT OR IGNORE INTO tags (name, normalized_name, status, created_at)
+              VALUES (?, ?, 'approved', ?)
+            `).bind(t, normalizeTagName(t), now).run();
+
+            const tagRow = await db.prepare('SELECT id FROM tags WHERE name = ? OR normalized_name = ?').bind(t, normalizeTagName(t)).first();
+            if (tagRow && (tagRow as any).id) {
+              await db.prepare('INSERT OR IGNORE INTO service_tags (service_id, tag_id) VALUES (?, ?)').bind(serviceId, (tagRow as any).id).run();
+            }
+          }
+        }
+        createdCount++;
+      } catch (err) {
+        console.warn('Batch service insert error for:', name, err);
+      }
+    }
+
+    return json({
+      success: true,
+      count: createdCount,
+      message: `총 ${createdCount}개의 사이트가 일괄 등록되었습니다.`
+    });
+  }
+
   // Admin Categories: GET, POST, PUT
   if (pathname === '/api/admin/categories') {
     if (method === 'GET') {
