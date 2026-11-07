@@ -537,6 +537,139 @@ apiRouter.post('/tags/suggest', (req: Request, res: Response) => {
   });
 });
 
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x2F;/g, '/')
+    .replace(/&apos;/g, "'");
+}
+
+async function fetchMetaForUrl(targetUrl: string): Promise<{
+  url: string;
+  title: string;
+  description: string;
+  image: string;
+  site_name: string;
+  keywords: string[];
+}> {
+  let url = targetUrl.trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = `https://${url}`;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return { url, title: targetUrl, description: '', image: '', site_name: '', keywords: [] };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 VibeDumpBot/1.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      return { url, title: parsedUrl.hostname, description: '', image: '', site_name: '', keywords: [] };
+    }
+
+    const text = await res.text();
+    const headMatch = text.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
+    const headContent = headMatch ? headMatch[1] : text.slice(0, 50000);
+
+    const getMeta = (propNames: string[]): string => {
+      for (const name of propNames) {
+        const regex1 = new RegExp(`<meta\\s+[^>]*(?:property|name)=["']${name}["'][^>]*content=["']([^"']*)["']`, 'i');
+        const regex2 = new RegExp(`<meta\\s+[^>]*content=["']([^"']*)["'][^>]*(?:property|name)=["']${name}["']`, 'i');
+        const m1 = headContent.match(regex1);
+        if (m1 && m1[1]) return decodeHtmlEntities(m1[1].trim());
+        const m2 = headContent.match(regex2);
+        if (m2 && m2[1]) return decodeHtmlEntities(m2[1].trim());
+      }
+      return '';
+    };
+
+    let title = getMeta(['og:title', 'twitter:title']);
+    if (!title) {
+      const titleMatch = headContent.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      if (titleMatch && titleMatch[1]) {
+        title = decodeHtmlEntities(titleMatch[1].trim());
+      }
+    }
+    if (title) {
+      title = title.replace(/\s*[|\-–—]\s*(Home|홈|Official|공식홈페이지|메인).*$/i, '').trim();
+    }
+
+    const description = getMeta(['og:description', 'description', 'twitter:description']);
+    let image = getMeta(['og:image', 'twitter:image', 'image']);
+    const site_name = getMeta(['og:site_name']);
+    const rawKeywords = getMeta(['keywords']);
+
+    if (image && !image.startsWith('http://') && !image.startsWith('https://')) {
+      try {
+        image = new URL(image, parsedUrl.origin).href;
+      } catch {}
+    }
+
+    const keywords = rawKeywords
+      ? rawKeywords.split(/[,/|]/).map(k => k.trim()).filter(k => k.length > 0 && k.length <= 15).slice(0, 5)
+      : [];
+
+    return {
+      url,
+      title: title || parsedUrl.hostname,
+      description: description || '',
+      image: image || '',
+      site_name: site_name || '',
+      keywords,
+    };
+  } catch {
+    clearTimeout(timeoutId);
+    return {
+      url,
+      title: parsedUrl.hostname,
+      description: '',
+      image: '',
+      site_name: '',
+      keywords: [],
+    };
+  }
+}
+
+// OpenGraph metadata crawler
+apiRouter.all('/metadata', async (req: Request, res: Response) => {
+  const target = req.query.url || req.body?.url;
+  if (!target || typeof target !== 'string' || !target.trim()) {
+    return res.status(400).json({ error: '웹사이트 URL을 입력해주세요.' });
+  }
+  const metadata = await fetchMetaForUrl(target);
+  res.json({ success: true, metadata });
+});
+
+apiRouter.post('/metadata/batch', async (req: Request, res: Response) => {
+  const urls = Array.isArray(req.body?.urls) ? req.body.urls : [];
+  if (urls.length === 0) {
+    return res.status(400).json({ error: '수집할 URL 목록이 비어있습니다.' });
+  }
+  const cleanUrls = urls.map((u: any) => String(u || '').trim()).filter(Boolean).slice(0, 25);
+  const items = await Promise.all(cleanUrls.map((u: string) => fetchMetaForUrl(u)));
+  res.json({ success: true, count: items.length, items });
+});
+
 // 7. GET /api/curations (Featured items: "이번 주의 발견", Editor's picks)
 apiRouter.get('/curations', (_req: Request, res: Response) => {
   const curations = db.prepare(`
