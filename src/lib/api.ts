@@ -684,3 +684,31 @@ export async function adminDeleteTag(tagId: number, token: string): Promise<any>
   });
   return await handleResponse(res, '태그 삭제 실패');
 }
+
+// ---------------- OpenGraph URL Metadata Crawler ----------------
+export interface UrlMetadata {
+  url: string;
+  title: string;
+  description: string;
+  image: string;
+  site_name: string;
+  keywords: string[];
+}
+
+export async function fetchUrlMetadata(url: string): Promise<{ success: boolean; metadata: UrlMetadata }> {
+  const res = await fetch(`${BASE_URL}/metadata`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  return await handleResponse(res, '웹사이트 정보를 가져오지 못했습니다.');
+}
+
+export async function fetchBatchUrlMetadata(urls: string[]): Promise<{ success: boolean; count: number; items: UrlMetadata[] }> {
+  const res = await fetch(`${BASE_URL}/metadata/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls }),
+  });
+  return await handleResponse(res, 'URL 일괄 정보를 가져오지 못했습니다.');
+}
