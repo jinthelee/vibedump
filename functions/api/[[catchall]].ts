@@ -42,6 +42,119 @@ function normalizeTagName(name: string): string {
   return name.trim().toLowerCase().replace(/[\s\-_]+/g, '').replace(/[#@$%^&*]/g, '');
 }
 
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x2F;/g, '/')
+    .replace(/&apos;/g, "'");
+}
+
+async function fetchMetaForUrl(targetUrl: string): Promise<{
+  url: string;
+  title: string;
+  description: string;
+  image: string;
+  site_name: string;
+  keywords: string[];
+}> {
+  let url = targetUrl.trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = `https://${url}`;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return { url, title: targetUrl, description: '', image: '', site_name: '', keywords: [] };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 VibeDumpBot/1.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      return { url, title: parsedUrl.hostname, description: '', image: '', site_name: '', keywords: [] };
+    }
+
+    const text = await res.text();
+    const headMatch = text.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
+    const headContent = headMatch ? headMatch[1] : text.slice(0, 50000);
+
+    const getMeta = (propNames: string[]): string => {
+      for (const name of propNames) {
+        const regex1 = new RegExp(`<meta\\s+[^>]*(?:property|name)=["']${name}["'][^>]*content=["']([^"']*)["']`, 'i');
+        const regex2 = new RegExp(`<meta\\s+[^>]*content=["']([^"']*)["'][^>]*(?:property|name)=["']${name}["']`, 'i');
+        const m1 = headContent.match(regex1);
+        if (m1 && m1[1]) return decodeHtmlEntities(m1[1].trim());
+        const m2 = headContent.match(regex2);
+        if (m2 && m2[1]) return decodeHtmlEntities(m2[1].trim());
+      }
+      return '';
+    };
+
+    let title = getMeta(['og:title', 'twitter:title']);
+    if (!title) {
+      const titleMatch = headContent.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      if (titleMatch && titleMatch[1]) {
+        title = decodeHtmlEntities(titleMatch[1].trim());
+      }
+    }
+    if (title) {
+      title = title.replace(/\s*[|\-–—]\s*(Home|홈|Official|공식홈페이지|메인).*$/i, '').trim();
+    }
+
+    const description = getMeta(['og:description', 'description', 'twitter:description']);
+    let image = getMeta(['og:image', 'twitter:image', 'image']);
+    const site_name = getMeta(['og:site_name']);
+    const rawKeywords = getMeta(['keywords']);
+
+    if (image && !image.startsWith('http://') && !image.startsWith('https://')) {
+      try {
+        image = new URL(image, parsedUrl.origin).href;
+      } catch {}
+    }
+
+    const keywords = rawKeywords
+      ? rawKeywords.split(/[,/|]/).map(k => k.trim()).filter(k => k.length > 0 && k.length <= 15).slice(0, 5)
+      : [];
+
+    return {
+      url,
+      title: title || parsedUrl.hostname,
+      description: description || '',
+      image: image || '',
+      site_name: site_name || '',
+      keywords,
+    };
+  } catch {
+    clearTimeout(timeoutId);
+    return {
+      url,
+      title: parsedUrl.hostname,
+      description: '',
+      image: '',
+      site_name: '',
+      keywords: [],
+    };
+  }
+}
+
 interface PagesFunctionContext<E = any> {
   request: Request;
   env: E;
@@ -90,6 +203,33 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     } catch {
       return {};
     }
+  }
+
+  // 0. GET/POST /api/metadata (Fetch OpenGraph metadata from website URL)
+  if (pathname === '/api/metadata' && (method === 'POST' || method === 'GET')) {
+    let target = url.searchParams.get('url');
+    if (!target && method === 'POST') {
+      const body = await parseBody();
+      target = body.url;
+    }
+    if (!target || typeof target !== 'string' || !target.trim()) {
+      return json({ error: '웹사이트 URL을 입력해주세요.' }, 400);
+    }
+    const meta = await fetchMetaForUrl(target);
+    return json({ success: true, metadata: meta });
+  }
+
+  // 0-1. POST /api/metadata/batch (Fetch OpenGraph metadata for multiple URLs)
+  if (pathname === '/api/metadata/batch' && method === 'POST') {
+    const body = await parseBody();
+    const urls = Array.isArray(body.urls) ? body.urls : [];
+    if (urls.length === 0) {
+      return json({ error: '수집할 URL 목록이 비어있습니다.' }, 400);
+    }
+    // Limit to max 25 URLs per batch request to prevent timeout
+    const cleanUrls = urls.map((u: any) => String(u || '').trim()).filter(Boolean).slice(0, 25);
+    const results = await Promise.all(cleanUrls.map((u: string) => fetchMetaForUrl(u)));
+    return json({ success: true, count: results.length, items: results });
   }
 
   // 1. GET /api/settings
