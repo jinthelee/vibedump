@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, Check, Copy, AlertCircle, Sparkles, Mail, ExternalLink, Plus, RotateCcw, HelpCircle } from 'lucide-react';
-import { createService, getImagePosition, cleanImageUrl } from '../lib/api';
+import { createService, getImagePosition, cleanImageUrl, fetchUrlMetadata } from '../lib/api';
 import { VALID_CATEGORIES } from '../types';
 
 interface SubmitServiceModalProps {
@@ -44,12 +44,69 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
   const [makerEmail, setMakerEmail] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isFetchingMeta, setIsFetchingMeta] = useState(false);
+  const [metaFetchMsg, setMetaFetchMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successData, setSuccessData] = useState<{ maker_code: string; service_id: number; is_custom?: boolean } | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [hasRestoredDraft, setHasRestoredDraft] = useState(false);
   const [draftSavedNotice, setDraftSavedNotice] = useState(false);
   const [showExample, setShowExample] = useState(false);
+
+  const handleAutoFetchMetadata = async () => {
+    let targetUrl = url.trim();
+    if (!targetUrl) {
+      setMetaFetchMsg({ type: 'error', text: '먼저 접속 주소(URL)를 입력해주세요.' });
+      return;
+    }
+    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+      targetUrl = `https://${targetUrl}`;
+      setUrl(targetUrl);
+    }
+    setIsFetchingMeta(true);
+    setMetaFetchMsg(null);
+    try {
+      const res = await fetchUrlMetadata(targetUrl);
+      const meta = res.metadata;
+      let filledCount = 0;
+      if (meta.title) {
+        setName(meta.title);
+        filledCount++;
+      }
+      if (meta.description) {
+        setShortDesc(meta.description.slice(0, 80));
+        setDescription(meta.description);
+        filledCount++;
+      }
+      if (meta.image) {
+        setThumbnailUrl(meta.image);
+        filledCount++;
+      }
+      if (meta.site_name && !makerName) {
+        setMakerName(meta.site_name);
+        filledCount++;
+      }
+      if (meta.keywords && meta.keywords.length > 0) {
+        setTags((prev) => {
+          const combined = Array.from(new Set([...prev, ...meta.keywords])).slice(0, 5);
+          return combined;
+        });
+        filledCount++;
+      }
+      setMetaFetchMsg({
+        type: 'success',
+        text: `✨ 메타데이터 수집 성공! (${filledCount}개 항목 자동 기입 완료)`
+      });
+    } catch (err: any) {
+      console.warn('Metadata fetch error:', err);
+      setMetaFetchMsg({
+        type: 'error',
+        text: err?.message || '메타데이터를 가져오지 못했습니다. URL을 확인해주세요.'
+      });
+    } finally {
+      setIsFetchingMeta(false);
+    }
+  };
 
   // Requirement 4: Load draft from localStorage on mount
   useEffect(() => {
@@ -438,17 +495,41 @@ export const SubmitServiceModal: React.FC<SubmitServiceModalProps> = ({ onClose,
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#0A0A0A]">
-                    접속 주소(URL) <span className="text-[#C81E4B]">*</span>
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-[#0A0A0A]">
+                      접속 주소(URL) <span className="text-[#C81E4B]">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleAutoFetchMetadata}
+                      disabled={isFetchingMeta || !url.trim()}
+                      className="text-[11px] font-bold px-2 py-0.5 rounded bg-[#FFFBEA] hover:bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] flex items-center gap-1 transition-all shadow-[1px_1px_0_#0A0A0A] active:translate-x-0.5 active:translate-y-0.5 disabled:opacity-50"
+                      title="웹사이트의 제목, 설명, 썸네일, 태그를 자동으로 추출합니다"
+                    >
+                      {isFetchingMeta ? (
+                        <RotateCcw className="w-3 h-3 animate-spin text-[#92400E]" />
+                      ) : (
+                        <Sparkles className="w-3 h-3 text-[#D97706]" />
+                      )}
+                      <span>{isFetchingMeta ? '수집 중...' : 'URL에서 정보 자동 채우기'}</span>
+                    </button>
+                  </div>
                   <input
                     type="url"
                     required
                     value={url}
-                    onChange={(e) => setUrl(e.target.value)}
+                    onChange={(e) => {
+                      setUrl(e.target.value);
+                      if (metaFetchMsg) setMetaFetchMsg(null);
+                    }}
                     placeholder="https://..."
                     className="w-full px-3 py-2 text-xs bg-white border-2 border-[#0A0A0A] rounded-lg focus:outline-none"
                   />
+                  {metaFetchMsg && (
+                    <p className={`text-[11px] font-medium pt-0.5 ${metaFetchMsg.type === 'success' ? 'text-emerald-700' : 'text-rose-600'}`}>
+                      {metaFetchMsg.text}
+                    </p>
+                  )}
                 </div>
               </div>
 
