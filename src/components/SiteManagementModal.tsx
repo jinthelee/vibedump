@@ -15,7 +15,8 @@ import {
   adminDeleteCuration, adminGetPromotions, adminCreatePromotion,
   adminTogglePromotion, adminDeletePromotion, adminReorderPromotions, adminSaveAllPromotions, adminGetStats, fetchSettings, updateAdminSettings,
   adminUpdateTagStatus, adminDeleteTag, adminDownloadBackup, adminRestoreBackup,
-  adminGetCategories, adminAddCategory, adminSaveCategories, adminRenameCategory, adminDeleteCategory
+  adminGetCategories, adminAddCategory, adminSaveCategories, adminRenameCategory, adminDeleteCategory,
+  fetchUrlMetadata, fetchBatchUrlMetadata
 } from '../lib/api';
 import { Service, ReportItem, Review, TagItem, Curation, Promotion, AdminStats, VALID_CATEGORIES } from '../types';
 
@@ -113,6 +114,8 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
   const [makerEmail, setMakerEmail] = useState('');
   const [makerTags, setMakerTags] = useState<string[]>([]);
   const [makerTagInput, setMakerTagInput] = useState('');
+  const [isFetchingMakerMeta, setIsFetchingMakerMeta] = useState(false);
+  const [makerMetaMsg, setMakerMetaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Maker post fields
   const [postTitle, setPostTitle] = useState('');
@@ -174,9 +177,15 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
     tags: '',
   });
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isFetchingEditMeta, setIsFetchingEditMeta] = useState(false);
+  const [editMetaMsg, setEditMetaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // CSV Batch Upload State
+  // Batch Registration State (Supports both URL List Crawler and CSV Upload)
   const [showCsvBatch, setShowCsvBatch] = useState(false);
+  const [batchTab, setBatchTab] = useState<'url_list' | 'csv'>('url_list');
+  const [urlListText, setUrlListText] = useState('');
+  const [urlBatchCategory, setUrlBatchCategory] = useState('생산성');
+  const [isCrawlingUrls, setIsCrawlingUrls] = useState(false);
   const [csvPreview, setCsvPreview] = useState<any[]>([]);
   const [csvFileName, setCsvFileName] = useState('');
   const [csvError, setCsvError] = useState<string | null>(null);
@@ -285,6 +294,58 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
 
   const handleRemoveMakerTag = (t: string) => {
     setMakerTags(makerTags.filter((item) => item !== t));
+  };
+
+  const handleAutoFetchMakerMeta = async () => {
+    let targetUrl = makerUrl.trim();
+    if (!targetUrl) {
+      setMakerMetaMsg({ type: 'error', text: '먼저 접속 주소(URL)를 입력해주세요.' });
+      return;
+    }
+    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+      targetUrl = `https://${targetUrl}`;
+      setMakerUrl(targetUrl);
+    }
+    setIsFetchingMakerMeta(true);
+    setMakerMetaMsg(null);
+    try {
+      const res = await fetchUrlMetadata(targetUrl);
+      const meta = res.metadata;
+      let filledCount = 0;
+      if (meta.title) {
+        setName(meta.title);
+        filledCount++;
+      }
+      if (meta.description) {
+        setShortDesc(meta.description.slice(0, 100));
+        setDescription(meta.description);
+        filledCount++;
+      }
+      if (meta.image) {
+        setThumbnailUrl(meta.image);
+        filledCount++;
+      }
+      if (meta.site_name && !makerName) {
+        setMakerName(meta.site_name);
+        filledCount++;
+      }
+      if (meta.keywords && meta.keywords.length > 0) {
+        const combined = Array.from(new Set([...makerTags, ...meta.keywords])).slice(0, 5);
+        setMakerTags(combined);
+        filledCount++;
+      }
+      setMakerMetaMsg({
+        type: 'success',
+        text: `✨ 메타데이터 수집 완료! (${filledCount}개 항목 채움)`
+      });
+    } catch (err: any) {
+      setMakerMetaMsg({
+        type: 'error',
+        text: err?.message || '메타데이터 수집 실패'
+      });
+    } finally {
+      setIsFetchingMakerMeta(false);
+    }
   };
 
   // Save updated category, URL, description, tags, screenshots, maker info
@@ -633,6 +694,141 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
       alert(err.message || '서비스 수정 실패');
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  // Auto-fetch OpenGraph metadata for the single service being edited
+  const handleAutoFetchEditMeta = async () => {
+    let targetUrl = editForm.url.trim();
+    if (!targetUrl) {
+      setEditMetaMsg({ type: 'error', text: '먼저 접속 주소(URL)를 입력해주세요.' });
+      return;
+    }
+    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+      targetUrl = `https://${targetUrl}`;
+      setEditForm((prev) => ({ ...prev, url: targetUrl }));
+    }
+    setIsFetchingEditMeta(true);
+    setEditMetaMsg(null);
+    try {
+      const res = await fetchUrlMetadata(targetUrl);
+      const meta = res.metadata;
+      let filledCount = 0;
+      setEditForm((prev) => {
+        const next = { ...prev };
+        if (meta.title) {
+          next.name = meta.title;
+          filledCount++;
+        }
+        if (meta.description) {
+          if (!next.short_desc) next.short_desc = meta.description.slice(0, 100);
+          if (!next.description) next.description = meta.description;
+          filledCount++;
+        }
+        if (meta.image) {
+          next.thumbnail_url = meta.image;
+          filledCount++;
+        }
+        if (meta.site_name && !next.maker_name) {
+          next.maker_name = meta.site_name;
+          filledCount++;
+        }
+        if (meta.keywords && meta.keywords.length > 0) {
+          const currentTags = prev.tags.split(',').map((t) => t.trim()).filter(Boolean);
+          const combined = Array.from(new Set([...currentTags, ...meta.keywords])).slice(0, 5);
+          next.tags = combined.join(', ');
+          filledCount++;
+        }
+        return next;
+      });
+      setEditMetaMsg({
+        type: 'success',
+        text: `✨ 메타데이터 수집 완료! (${filledCount}개 항목 채움: ${meta.title || meta.site_name || '사이트 정보'})`
+      });
+    } catch (err: any) {
+      console.warn('Metadata fetch error in edit form:', err);
+      setEditMetaMsg({
+        type: 'error',
+        text: err?.message || '메타데이터를 가져오지 못했습니다. URL을 확인해주세요.'
+      });
+    } finally {
+      setIsFetchingEditMeta(false);
+    }
+  };
+
+  // Crawl metadata for a list of URLs (e.g. from Google search)
+  const handleCrawlBatchUrls = async () => {
+    setCsvError(null);
+    const rawLines = urlListText
+      .split(/[\n\r,]+/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    if (rawLines.length === 0) {
+      setCsvError('수집할 URL을 최소 1개 이상 입력해주세요. (한 줄에 하나씩 입력)');
+      return;
+    }
+
+    // Deduplicate and ensure protocol
+    const urls: string[] = [];
+    for (const line of rawLines) {
+      let u = line;
+      if (!u.startsWith('http://') && !u.startsWith('https://')) {
+        u = `https://${u}`;
+      }
+      if (!urls.includes(u)) {
+        urls.push(u);
+      }
+    }
+
+    const targetUrls = urls.slice(0, 25);
+    if (urls.length > 25) {
+      setCsvError('한 번에 최대 25개 URL까지 일괄 수집할 수 있습니다. 상위 25개로 수집을 진행합니다.');
+    }
+
+    setIsCrawlingUrls(true);
+    try {
+      const res = await fetchBatchUrlMetadata(targetUrls);
+      const parsedItems = (res.items || []).map((meta) => {
+        let hostname = '';
+        try {
+          hostname = new URL(meta.url).hostname;
+        } catch {
+          hostname = meta.url;
+        }
+        const title = meta.title || hostname;
+        const short_desc = (meta.description || title || '바이브코딩 웹 서비스').slice(0, 100);
+        const description = meta.description || short_desc;
+        const tags = (meta.keywords && meta.keywords.length > 0) ? meta.keywords.slice(0, 5) : ['웹앱'];
+        const isValid = Boolean(title && meta.url);
+
+        return {
+          name: title,
+          url: meta.url,
+          short_desc,
+          description,
+          category: urlBatchCategory || '생산성',
+          tags,
+          thumbnail_url: meta.image || undefined,
+          screenshot_url: undefined,
+          maker_name: meta.site_name || undefined,
+          isValid,
+          error: !isValid ? '사이트 정보 누락' : undefined,
+        };
+      });
+
+      if (parsedItems.length === 0) {
+        setCsvError('유효한 웹사이트 메타데이터를 추출하지 못했습니다.');
+        setCsvPreview([]);
+        return;
+      }
+
+      setCsvPreview(parsedItems);
+      setCsvFileName(`구글/웹 URL 수집 (${parsedItems.length}개)`);
+    } catch (err: any) {
+      setCsvError(`URL 일괄 수집 실패: ${err?.message || '네트워크 오류'}`);
+    } finally {
+      setIsCrawlingUrls(false);
     }
   };
 
@@ -1402,17 +1598,41 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-xs font-bold text-[#0A0A0A]">
-                          접속 주소(URL) <span className="text-[#C81E4B]">*</span>
-                        </label>
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-[#0A0A0A]">
+                            접속 주소(URL) <span className="text-[#C81E4B]">*</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={handleAutoFetchMakerMeta}
+                            disabled={isFetchingMakerMeta || !makerUrl.trim()}
+                            className="text-[11px] font-bold px-2 py-0.5 rounded bg-[#FFFBEA] hover:bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] flex items-center gap-1 transition-all shadow-[1px_1px_0_#0A0A0A] active:translate-x-0.5 disabled:opacity-50"
+                            title="웹사이트의 제목, 설명, 썸네일, 태그를 자동으로 추출합니다"
+                          >
+                            {isFetchingMakerMeta ? (
+                              <RotateCcw className="w-3 h-3 animate-spin text-[#92400E]" />
+                            ) : (
+                              <Sparkles className="w-3 h-3 text-[#D97706]" />
+                            )}
+                            <span>{isFetchingMakerMeta ? '수집 중...' : 'URL 메타데이터 채우기'}</span>
+                          </button>
+                        </div>
                         <input
                           type="url"
                           required
                           value={makerUrl}
-                          onChange={(e) => setMakerUrl(e.target.value)}
+                          onChange={(e) => {
+                            setMakerUrl(e.target.value);
+                            if (makerMetaMsg) setMakerMetaMsg(null);
+                          }}
                           placeholder="https://..."
                           className="w-full px-3 py-2 text-xs bg-white border-2 border-[#0A0A0A] rounded-lg focus:outline-none"
                         />
+                        {makerMetaMsg && (
+                          <p className={`text-[11px] font-medium pt-0.5 ${makerMetaMsg.type === 'success' ? 'text-emerald-700' : 'text-rose-600'}`}>
+                            {makerMetaMsg.text}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -2278,31 +2498,21 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
                 {/* Services Review & Direct Card Editing Tab */}
                 {adminTab === 'services' && (
                   <div className="space-y-4">
-                    {/* CSV Batch Upload Header Card */}
+                    {/* Batch Upload Header Card */}
                     <div className="p-3.5 bg-gradient-to-r from-[#FFFBEA] to-[#F1F0E8] border-2 border-[#0A0A0A] rounded-xl flex items-center justify-between flex-wrap gap-2 shadow-[2px_2px_0_#0A0A0A]">
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="px-2 py-0.5 bg-[#FFD23F] border border-[#0A0A0A] rounded text-[11px] font-black text-[#0A0A0A]">
-                            📊 대량 등록
+                            ⚡ 대량 등록
                           </span>
-                          <h4 className="font-display text-sm text-[#0A0A0A]">엑셀 / CSV 파일로 사이트 한 번에 올리기</h4>
+                          <h4 className="font-display text-sm text-[#0A0A0A]">구글 URL 목록 수집 & CSV 엑셀 일괄 등록</h4>
                         </div>
                         <p className="text-[11px] text-[#52525B] mt-0.5">
-                          구글 스프레드시트나 엑셀 표로 정리한 사이트 목록(.csv)을 한 번에 데이터베이스에 밀어넣을 수 있습니다.
+                          구글 검색결과에서 복사한 여러 사이트 주소를 붙여넣으면 제목·설명·썸네일·태그를 자동 추출하거나, 엑셀/CSV 파일로 한 번에 등록합니다.
                         </p>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={handleDownloadCsvTemplate}
-                          className="px-3 py-1.5 bg-white hover:bg-neutral-100 border border-[#0A0A0A] rounded-lg text-xs font-bold shadow-[1px_1px_0_#0A0A0A] flex items-center gap-1.5 text-[#0A0A0A]"
-                          title="엑셀에서 바로 열리는 샘플 템플릿 다운로드"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>양식 다운로드</span>
-                        </button>
-
                         <button
                           type="button"
                           onClick={() => {
@@ -2313,50 +2523,135 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
                             showCsvBatch ? 'bg-[#0A0A0A] text-white' : 'bg-[#06D6A0] text-[#0A0A0A]'
                           }`}
                         >
-                          <Upload className="w-3.5 h-3.5" />
-                          <span>{showCsvBatch ? '업로드 닫기' : 'CSV 파일 올리기'}</span>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>{showCsvBatch ? '대량 등록 닫기' : '사이트 대량 등록 열기'}</span>
                         </button>
                       </div>
                     </div>
 
-                    {/* CSV Batch Upload Expandable Panel */}
+                    {/* Batch Registration Expandable Panel */}
                     {showCsvBatch && (
                       <div className="p-4 bg-[#FAFAF5] border-2 border-[#0A0A0A] rounded-xl space-y-3.5 shadow-[4px_4px_0_#0A0A0A] animate-in fade-in duration-200">
-                        <div className="flex items-center justify-between border-b-2 border-[#0A0A0A]/20 pb-2">
-                          <div>
-                            <b className="text-xs font-bold text-[#0A0A0A]">파일 선택 및 미리보기</b>
-                            <p className="text-[11px] text-[#52525B]">
-                              [양식 다운로드]로 받은 .csv 파일에 데이터를 채운 뒤 아래에 업로드하세요.
-                            </p>
+                        {/* Tab Switcher: URL List vs CSV File */}
+                        <div className="flex items-center justify-between border-b-2 border-[#0A0A0A]/20 pb-2 flex-wrap gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setBatchTab('url_list')}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold border-2 border-[#0A0A0A] transition-all flex items-center gap-1.5 ${
+                                batchTab === 'url_list'
+                                  ? 'bg-[#FFD23F] text-[#0A0A0A] shadow-[2px_2px_0_#0A0A0A]'
+                                  : 'bg-white text-[#52525B] hover:bg-neutral-100'
+                              }`}
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-[#D97706]" />
+                              <span>🌐 구글/웹 URL 목록 붙여넣기 (추천)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBatchTab('csv')}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold border-2 border-[#0A0A0A] transition-all flex items-center gap-1.5 ${
+                                batchTab === 'csv'
+                                  ? 'bg-[#FFD23F] text-[#0A0A0A] shadow-[2px_2px_0_#0A0A0A]'
+                                  : 'bg-white text-[#52525B] hover:bg-neutral-100'
+                              }`}
+                            >
+                              <Upload className="w-3.5 h-3.5" />
+                              <span>📄 엑셀 / CSV 파일 업로드</span>
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={handleDownloadCsvTemplate}
-                            className="text-[11px] text-[#1F5FD1] underline font-bold"
-                          >
-                            엑셀 양식 다시 받기 (.csv)
-                          </button>
+
+                          {batchTab === 'csv' && (
+                            <button
+                              type="button"
+                              onClick={handleDownloadCsvTemplate}
+                              className="text-[11px] text-[#1F5FD1] hover:underline font-bold flex items-center gap-1"
+                            >
+                              <Download className="w-3 h-3" />
+                              <span>엑셀 양식 다운로드 (.csv)</span>
+                            </button>
+                          )}
                         </div>
 
-                        {/* File Input Box */}
-                        <div className="flex items-center gap-2">
-                          <label className="flex-1 cursor-pointer">
-                            <div className="p-3 bg-white border-2 border-dashed border-[#0A0A0A] rounded-xl text-center hover:bg-[#FFFBEA] transition-colors">
-                              <span className="text-xs font-bold text-[#0A0A0A] block">
-                                {csvFileName ? `📄 선택된 파일: ${csvFileName}` : '📁 클릭하여 CSV 파일(.csv)을 선택하세요'}
-                              </span>
-                              <span className="text-[10px] text-[#71717A]">
-                                UTF-8 또는 엑셀에서 "CSV UTF-8 (쉼표로 분리)"로 저장한 파일 지원
-                              </span>
+                        {/* TAB 1: URL List Crawler */}
+                        {batchTab === 'url_list' && (
+                          <div className="space-y-3 bg-white p-3.5 border-2 border-[#0A0A0A] rounded-xl shadow-[2px_2px_0_#0A0A0A]">
+                            <div>
+                              <b className="text-xs font-bold text-[#0A0A0A] flex items-center gap-1.5">
+                                <span>구글 검색이나 북마크에서 복사한 웹사이트 주소(URL) 목록</span>
+                              </b>
+                              <p className="text-[11px] text-[#52525B] mt-0.5">
+                                URL을 한 줄에 하나씩 붙여넣으세요. 서버가 각 사이트의 OpenGraph 메타데이터(제목, 설명, 썸네일, 태그)를 자동으로 수집합니다. (1회 최대 25개)
+                              </p>
                             </div>
-                            <input
-                              type="file"
-                              accept=".csv,text/csv,text/comma-separated-values"
-                              onChange={handleCsvFileChange}
-                              className="hidden"
+
+                            <textarea
+                              rows={5}
+                              value={urlListText}
+                              onChange={(e) => setUrlListText(e.target.value)}
+                              placeholder={`https://example-vibe-coding-app.pages.dev\nhttps://another-retro-game.vercel.app\nhttps://productivity-tool.com`}
+                              className="w-full px-3 py-2 text-xs font-mono bg-[#FAFAFA] border-2 border-[#0A0A0A] rounded-lg focus:outline-none focus:bg-white resize-y"
                             />
-                          </label>
-                        </div>
+
+                            <div className="flex items-center justify-between flex-wrap gap-2 pt-1">
+                              <div className="flex items-center gap-2">
+                                <label className="text-xs font-bold text-[#0A0A0A]">기본 분류 카테고리:</label>
+                                <select
+                                  value={urlBatchCategory}
+                                  onChange={(e) => setUrlBatchCategory(e.target.value)}
+                                  className="px-2.5 py-1 text-xs bg-white border-2 border-[#0A0A0A] rounded-lg font-bold focus:outline-none"
+                                >
+                                  {adminCategories.map((c) => (
+                                    <option key={c} value={c}>{c}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={handleCrawlBatchUrls}
+                                disabled={isCrawlingUrls || !urlListText.trim()}
+                                className="px-4 py-2 bg-[#FFD23F] hover:bg-[#FFE58F] border-2 border-[#0A0A0A] rounded-xl text-xs font-black shadow-[2px_2px_0_#0A0A0A] active:translate-x-0.5 active:translate-y-0.5 flex items-center gap-2 disabled:opacity-50"
+                              >
+                                {isCrawlingUrls ? (
+                                  <>
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    <span>메타데이터 수집 중... (잠시만 기다려주세요)</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="w-3.5 h-3.5 text-[#0A0A0A]" />
+                                    <span>✨ 메타데이터 일괄 수집 & 파싱</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TAB 2: CSV File Upload */}
+                        {batchTab === 'csv' && (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2">
+                              <label className="flex-1 cursor-pointer">
+                                <div className="p-3 bg-white border-2 border-dashed border-[#0A0A0A] rounded-xl text-center hover:bg-[#FFFBEA] transition-colors">
+                                  <span className="text-xs font-bold text-[#0A0A0A] block">
+                                    {csvFileName ? `📄 선택된 파일: ${csvFileName}` : '📁 클릭하여 CSV 파일(.csv)을 선택하세요'}
+                                  </span>
+                                  <span className="text-[10px] text-[#71717A]">
+                                    UTF-8 또는 엑셀에서 "CSV UTF-8 (쉼표로 분리)"로 저장한 파일 지원
+                                  </span>
+                                </div>
+                                <input
+                                  type="file"
+                                  accept=".csv,text/csv,text/comma-separated-values"
+                                  onChange={handleCsvFileChange}
+                                  className="hidden"
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Error Message */}
                         {csvError && (
@@ -2481,14 +2776,38 @@ export const SiteManagementModal: React.FC<SiteManagementModalProps> = ({
                             </div>
 
                             <div className="space-y-1">
-                              <label className="text-xs font-bold text-[#0A0A0A]">접속 주소 (URL) *</label>
+                              <div className="flex items-center justify-between">
+                                <label className="text-xs font-bold text-[#0A0A0A]">접속 주소 (URL) *</label>
+                                <button
+                                  type="button"
+                                  onClick={handleAutoFetchEditMeta}
+                                  disabled={isFetchingEditMeta || !editForm.url.trim()}
+                                  className="text-[11px] font-bold px-2 py-0.5 rounded bg-white hover:bg-[#FFFBEA] text-[#854D0E] border border-[#E5D7A3] flex items-center gap-1 transition-all shadow-[1px_1px_0_#0A0A0A] active:translate-x-0.5 disabled:opacity-50"
+                                  title="웹사이트의 제목, 설명, 썸네일, 태그를 자동으로 추출합니다"
+                                >
+                                  {isFetchingEditMeta ? (
+                                    <RotateCcw className="w-3 h-3 animate-spin text-[#854D0E]" />
+                                  ) : (
+                                    <Sparkles className="w-3 h-3 text-[#D97706]" />
+                                  )}
+                                  <span>{isFetchingEditMeta ? '수집 중...' : 'URL 메타데이터 채우기'}</span>
+                                </button>
+                              </div>
                               <input
                                 type="url"
                                 required
                                 value={editForm.url}
-                                onChange={(e) => setEditForm({ ...editForm, url: e.target.value })}
+                                onChange={(e) => {
+                                  setEditForm({ ...editForm, url: e.target.value });
+                                  if (editMetaMsg) setEditMetaMsg(null);
+                                }}
                                 className="w-full px-3 py-1.5 text-xs bg-white border-2 border-[#0A0A0A] rounded-lg focus:outline-none"
                               />
+                              {editMetaMsg && (
+                                <p className={`text-[11px] font-medium pt-0.5 ${editMetaMsg.type === 'success' ? 'text-emerald-700' : 'text-rose-600'}`}>
+                                  {editMetaMsg.text}
+                                </p>
+                              )}
                             </div>
                           </div>
 
